@@ -4,7 +4,7 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const File = require('../models/File');
-const OrderDate = require('../models/OrderDate'); // নতুন Model Add করা হলো
+const OrderDate = require('../models/OrderDate'); 
 
 // ১. Multer Setup
 const storage = multer.diskStorage({
@@ -102,33 +102,37 @@ router.delete('/:id', async (req, res) => {
 });
 
 // ==========================================
-// API 4: Save Process Dates (New Feature)
+// API 4: Save Process Dates & Fabric Planning (Fixed)
 // ==========================================
 router.post('/save-dates', async (req, res) => {
     try {
-        const { orderNo, cuttingDate, knittingDate, deliveryDate } = req.body;
+        // ফ্রন্টএন্ড থেকে পাঠানো সবগুলো ডেটা রিসিভ করা হলো
+        const { 
+            orderNo, eventDay, ship1, shipLast, yarnDate, deliStart, deliEnd, 
+            knitStart, knitEnd, dyeStart, dyeEnd, cuttingDate, knittingDate, deliveryDate,
+            fabricNotes, fabricItems 
+        } = req.body;
         
-        // চেক করছি এই অর্ডারের ডেট আগে থেকে আছে কিনা
-        let record = await OrderDate.findOne({ orderNo });
+        // Mongoose এর findOneAndUpdate মেথড দিয়ে একবারে সেভ/আপডেট করা হলো
+        const updatedRecord = await OrderDate.findOneAndUpdate(
+            { orderNo: orderNo }, // যেটা দিয়ে ডাটাবেসে খুঁজবে
+            { 
+                eventDay, ship1, shipLast, yarnDate, deliStart, deliEnd, 
+                knitStart, knitEnd, dyeStart, dyeEnd, cuttingDate, knittingDate, deliveryDate,
+                fabricNotes, fabricItems // নতুন ফিল্ডগুলোও এখানে পাঠিয়ে দিলাম
+            },
+            { new: true, upsert: true } // upsert: true মানে হলো আগে থেকে না থাকলে নতুন করে বানাবে
+        );
         
-        if (record) {
-            record.cuttingDate = cuttingDate;
-            record.knittingDate = knittingDate;
-            record.deliveryDate = deliveryDate;
-            await record.save();
-        } else {
-            record = new OrderDate({ orderNo, cuttingDate, knittingDate, deliveryDate });
-            await record.save();
-        }
-        res.status(200).json({ message: 'Dates saved successfully!' });
+        res.status(200).json({ message: 'Planning Data saved successfully!', data: updatedRecord });
     } catch (error) {
         console.error("Save Dates Error:", error);
-        res.status(500).json({ message: 'Server Error' });
+        res.status(500).json({ message: 'Server Error while saving data' });
     }
 });
 
 // ==========================================
-// API 5: Get All Process Dates (New Feature)
+// API 5: Get All Process Dates
 // ==========================================
 router.get('/all-dates', async (req, res) => {
     try {
