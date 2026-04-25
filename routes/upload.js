@@ -102,26 +102,18 @@ router.delete('/:id', async (req, res) => {
 });
 
 // ==========================================
-// API 4: Save Process Dates & Fabric Planning (Fixed)
+// API 4: Save Process Dates & Fabric Planning (Cleaned)
 // ==========================================
 router.post('/save-dates', async (req, res) => {
     try {
-        // ফ্রন্টএন্ড থেকে পাঠানো সবগুলো ডেটা রিসিভ করা হলো
-        const { 
-            orderNo, eventDay, ship1, shipLast, yarnDate, deliStart, deliEnd, 
-            knitStart, knitEnd, dyeStart, dyeEnd, cuttingDate, knittingDate, deliveryDate,
-            fabricNotes, fabricItems 
-        } = req.body;
+        // ফ্রন্টএন্ড থেকে এখন শুধু orderNo আর fabricItems আসবে
+        const { orderNo, fabricItems } = req.body;
         
-        // Mongoose এর findOneAndUpdate মেথড দিয়ে একবারে সেভ/আপডেট করা হলো
+        // শুধু fabricItems ডাটাবেসে আপডেট/সেভ করা হচ্ছে
         const updatedRecord = await OrderDate.findOneAndUpdate(
-            { orderNo: orderNo }, // যেটা দিয়ে ডাটাবেসে খুঁজবে
-            { 
-                eventDay, ship1, shipLast, yarnDate, deliStart, deliEnd, 
-                knitStart, knitEnd, dyeStart, dyeEnd, cuttingDate, knittingDate, deliveryDate,
-                fabricNotes, fabricItems // নতুন ফিল্ডগুলোও এখানে পাঠিয়ে দিলাম
-            },
-            { new: true, upsert: true } // upsert: true মানে হলো আগে থেকে না থাকলে নতুন করে বানাবে
+            { orderNo: orderNo }, 
+            { fabricItems },
+            { new: true, upsert: true } 
         );
         
         res.status(200).json({ message: 'Planning Data saved successfully!', data: updatedRecord });
