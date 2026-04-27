@@ -17,6 +17,10 @@ const fileSchema = new mongoose.Schema({
         type: String, // Admin or Planner
         required: true
     },
+    category: {
+        type: String, // 'General', 'Knitting', 'Dyeing', 'Finishing', 'Delivery'
+        default: 'General'
+    },
     size: {
         type: Number
     }

@@ -23,15 +23,16 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // ==========================================
-// API 1: File Upload & Overwrite
+// API 1: File Upload & Overwrite (Category Based)
 // ==========================================
 router.post('/upload', upload.single('document'), async (req, res) => {
     try {
-        const { uploadedBy, role } = req.body;
+        const { uploadedBy, role, category } = req.body;
         const originalName = req.file.originalname; 
         const savedName = req.file.filename;        
 
-        const existingFile = await File.findOne({ originalName: originalName });
+        // Find file with same original name AND same category
+        const existingFile = await File.findOne({ originalName: originalName, category: category });
 
         if (existingFile) {
             const oldFilePath = path.join(__dirname, '../uploads', existingFile.savedName);
@@ -42,7 +43,7 @@ router.post('/upload', upload.single('document'), async (req, res) => {
             existingFile.savedName = savedName;
             existingFile.uploadedBy = uploadedBy;
             existingFile.role = role;
-            existingFile.createdAt = Date.now(); 
+            // Category remains same
             
             await existingFile.save();
 
@@ -52,7 +53,8 @@ router.post('/upload', upload.single('document'), async (req, res) => {
                 originalName: originalName,
                 savedName: savedName,
                 uploadedBy: uploadedBy,
-                role: role
+                role: role,
+                category: category || 'General'
             });
             
             await newFile.save();
@@ -102,17 +104,21 @@ router.delete('/:id', async (req, res) => {
 });
 
 // ==========================================
-// API 4: Save Process Dates & Fabric Planning (Cleaned)
+// API 4: Save Process Dates & Fabric Planning (Department Wise)
 // ==========================================
 router.post('/save-dates', async (req, res) => {
     try {
-        // ফ্রন্টএন্ড থেকে এখন শুধু orderNo আর fabricItems আসবে
-        const { orderNo, fabricItems } = req.body;
+        // ফ্রন্টএন্ড থেকে এখন orderNo, department আর fabricItems আসবে
+        const { orderNo, department, fabricItems } = req.body;
         
-        // শুধু fabricItems ডাটাবেসে আপডেট/সেভ করা হচ্ছে
+        // ডাইনামিক অবজেক্ট তৈরি করা হচ্ছে যাতে শুধু নির্দিষ্ট ডিপার্টমেন্টের ডেটা আপডেট হয়
+        let updateObj = {};
+        updateObj[department] = fabricItems; 
+        
+        // $set ব্যবহার করে ডাটাবেসে সেভ করা হচ্ছে যাতে অন্য ডিপার্টমেন্টের ডেটা ডিলিট না হয়
         const updatedRecord = await OrderDate.findOneAndUpdate(
             { orderNo: orderNo }, 
-            { fabricItems },
+            { $set: updateObj },
             { new: true, upsert: true } 
         );
         
