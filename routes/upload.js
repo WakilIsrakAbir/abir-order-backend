@@ -23,40 +23,26 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // ==========================================
-// API 1: File Upload (Bulletproof Overwrite)
+// API 1: File Upload (Version Control Active - NO OVERWRITE)
 // ==========================================
 router.post('/upload', upload.single('document'), async (req, res) => {
     try {
         const { uploadedBy, role, category } = req.body;
         const originalName = req.file.originalname; 
         const savedName = req.file.filename;        
-        const targetCategory = category || 'General';
 
-        // ডাটাবেস থেকে একই নামের এবং একই ক্যাটাগরির 'সবগুলো' ডুপ্লিকেট ফাইল খুঁজে বের করবে
-        const existingFiles = await File.find({ originalName: originalName, category: targetCategory });
-
-        // যদি কোনো ফাইল থাকে, তবে সার্ভার ফোল্ডার এবং ডাটাবেস থেকে সব ডিলিট করে দিবে (ক্লিনআপ)
-        if (existingFiles.length > 0) {
-            for (let file of existingFiles) {
-                const oldFilePath = path.join(__dirname, '../uploads', file.savedName);
-                if (fs.existsSync(oldFilePath)) {
-                    fs.unlinkSync(oldFilePath); 
-                }
-                await File.findByIdAndDelete(file._id);
-            }
-        }
-
-        // ক্লিনআপ শেষে একদম ফ্রেশ করে নতুন ফাইলটা সেভ করবে
+        // পুরনো ফাইল আর ডিলিট হবে না। সব ফাইল ভার্সন হিসেবে জমা হবে!
         const newFile = new File({
             originalName: originalName,
             savedName: savedName,
             uploadedBy: uploadedBy,
             role: role,
-            category: targetCategory
+            category: category || 'General'
         });
         
         await newFile.save();
-        return res.status(200).json({ message: 'File Overwritten & Cleaned Successfully!', file: newFile });
+        return res.status(200).json({ message: 'File Uploaded and History Saved!', file: newFile });
+
     } catch (error) {
         console.error("Upload Error:", error);
         res.status(500).json({ message: 'Server Error during upload' });
@@ -68,6 +54,7 @@ router.post('/upload', upload.single('document'), async (req, res) => {
 // ==========================================
 router.get('/all', async (req, res) => {
     try {
+        // Sort by newest first
         const files = await File.find().sort({ createdAt: -1 });
         res.status(200).json(files);
     } catch (error) {
