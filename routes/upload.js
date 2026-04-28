@@ -23,7 +23,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // ==========================================
-// API 1: File Upload & Overwrite (Category Based)
+// API 1: File Upload & Overwrite (Version Control Active - NO OVERWRITE)
 // ==========================================
 router.post('/upload', upload.single('document'), async (req, res) => {
     try {
@@ -31,35 +31,17 @@ router.post('/upload', upload.single('document'), async (req, res) => {
         const originalName = req.file.originalname; 
         const savedName = req.file.filename;        
 
-        // Find file with same original name AND same category
-        const existingFile = await File.findOne({ originalName: originalName, category: category });
-
-        if (existingFile) {
-            const oldFilePath = path.join(__dirname, '../uploads', existingFile.savedName);
-            if (fs.existsSync(oldFilePath)) {
-                fs.unlinkSync(oldFilePath); 
-            }
-
-            existingFile.savedName = savedName;
-            existingFile.uploadedBy = uploadedBy;
-            existingFile.role = role;
-            // Category remains same
-            
-            await existingFile.save();
-
-            return res.status(200).json({ message: 'File Overwritten Successfully!', file: existingFile });
-        } else {
-            const newFile = new File({
-                originalName: originalName,
-                savedName: savedName,
-                uploadedBy: uploadedBy,
-                role: role,
-                category: category || 'General'
-            });
-            
-            await newFile.save();
-            return res.status(200).json({ message: 'New File Uploaded Successfully!', file: newFile });
-        }
+        // আগের ফাইল ডিলিট করার লজিক রিমুভ করা হয়েছে। এখন সব ফাইল ভার্সন হিসেবে সেভ হবে!
+        const newFile = new File({
+            originalName: originalName,
+            savedName: savedName,
+            uploadedBy: uploadedBy,
+            role: role,
+            category: category || 'General'
+        });
+        
+        await newFile.save();
+        return res.status(200).json({ message: 'File Uploaded (New Version Saved)!', file: newFile });
     } catch (error) {
         console.error("Upload Error:", error);
         res.status(500).json({ message: 'Server Error during upload' });
