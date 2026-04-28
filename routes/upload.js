@@ -23,25 +23,40 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // ==========================================
-// API 1: File Upload & Overwrite (Version Control Active - NO OVERWRITE)
+// API 1: File Upload (Bulletproof Overwrite)
 // ==========================================
 router.post('/upload', upload.single('document'), async (req, res) => {
     try {
         const { uploadedBy, role, category } = req.body;
         const originalName = req.file.originalname; 
         const savedName = req.file.filename;        
+        const targetCategory = category || 'General';
 
-        // আগের ফাইল ডিলিট করার লজিক রিমুভ করা হয়েছে। এখন সব ফাইল ভার্সন হিসেবে সেভ হবে!
+        // ডাটাবেস থেকে একই নামের এবং একই ক্যাটাগরির 'সবগুলো' ডুপ্লিকেট ফাইল খুঁজে বের করবে
+        const existingFiles = await File.find({ originalName: originalName, category: targetCategory });
+
+        // যদি কোনো ফাইল থাকে, তবে সার্ভার ফোল্ডার এবং ডাটাবেস থেকে সব ডিলিট করে দিবে (ক্লিনআপ)
+        if (existingFiles.length > 0) {
+            for (let file of existingFiles) {
+                const oldFilePath = path.join(__dirname, '../uploads', file.savedName);
+                if (fs.existsSync(oldFilePath)) {
+                    fs.unlinkSync(oldFilePath); 
+                }
+                await File.findByIdAndDelete(file._id);
+            }
+        }
+
+        // ক্লিনআপ শেষে একদম ফ্রেশ করে নতুন ফাইলটা সেভ করবে
         const newFile = new File({
             originalName: originalName,
             savedName: savedName,
             uploadedBy: uploadedBy,
             role: role,
-            category: category || 'General'
+            category: targetCategory
         });
         
         await newFile.save();
-        return res.status(200).json({ message: 'File Uploaded (New Version Saved)!', file: newFile });
+        return res.status(200).json({ message: 'File Overwritten & Cleaned Successfully!', file: newFile });
     } catch (error) {
         console.error("Upload Error:", error);
         res.status(500).json({ message: 'Server Error during upload' });
@@ -90,14 +105,11 @@ router.delete('/:id', async (req, res) => {
 // ==========================================
 router.post('/save-dates', async (req, res) => {
     try {
-        // ফ্রন্টএন্ড থেকে এখন orderNo, department আর fabricItems আসবে
         const { orderNo, department, fabricItems } = req.body;
         
-        // ডাইনামিক অবজেক্ট তৈরি করা হচ্ছে যাতে শুধু নির্দিষ্ট ডিপার্টমেন্টের ডেটা আপডেট হয়
         let updateObj = {};
         updateObj[department] = fabricItems; 
         
-        // $set ব্যবহার করে ডাটাবেসে সেভ করা হচ্ছে যাতে অন্য ডিপার্টমেন্টের ডেটা ডিলিট না হয়
         const updatedRecord = await OrderDate.findOneAndUpdate(
             { orderNo: orderNo }, 
             { $set: updateObj },
