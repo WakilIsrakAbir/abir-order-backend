@@ -5,9 +5,7 @@ const orderDateSchema = new mongoose.Schema({
     knitting: { type: Array, default: [] },
     dyeing: { type: Array, default: [] },
     finishing: { type: Array, default: [] },
-    delivery: { type: Array, default: [] },
-
-    orderStatus: { type: String, default: 'Active' }
+    delivery: { type: Array, default: [] }
 });
 
 module.exports = mongoose.model('OrderDate', orderDateSchema);

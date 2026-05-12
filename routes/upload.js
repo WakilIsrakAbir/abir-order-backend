@@ -92,14 +92,10 @@ router.delete('/:id', async (req, res) => {
 // ==========================================
 router.post('/save-dates', async (req, res) => {
     try {
-        const { orderNo, department, fabricItems, orderStatus } = req.body;
+        const { orderNo, department, fabricItems } = req.body;
         
         let updateObj = {};
         updateObj[department] = fabricItems; 
-        
-        if (orderStatus) {
-            updateObj.orderStatus = orderStatus;
-        }
         
         const updatedRecord = await OrderDate.findOneAndUpdate(
             { orderNo: orderNo }, 
