@@ -92,22 +92,18 @@ router.delete('/:id', async (req, res) => {
 // ==========================================
 router.post('/save-dates', async (req, res) => {
     try {
-        const { orderNo, department, fabricItems } = req.body;
+        const { orderNo, department, fabricItems, orderStatus } = req.body;
+        let updateObj = { [department]: fabricItems };
         
-        let updateObj = {};
-        updateObj[department] = fabricItems; 
+        if (orderStatus) updateObj.orderStatus = orderStatus; // Status update hobe
         
         const updatedRecord = await OrderDate.findOneAndUpdate(
             { orderNo: orderNo }, 
             { $set: updateObj },
-            { new: true, upsert: true } 
+            { new: true, upsert: true }
         );
-        
-        res.status(200).json({ message: 'Planning Data saved successfully!', data: updatedRecord });
-    } catch (error) {
-        console.error("Save Dates Error:", error);
-        res.status(500).json({ message: 'Server Error while saving data' });
-    }
+        res.status(200).json({ message: 'Saved!', data: updatedRecord });
+    } catch (error) { res.status(500).json({ message: 'Error' }); }
 });
 
 // ==========================================
@@ -120,6 +116,13 @@ router.get('/all-dates', async (req, res) => {
     } catch (error) {
         res.status(500).json({ message: 'Server Error' });
     }
+});
+
+router.delete('/delete-order/:orderNo', async (req, res) => {
+    try {
+        await OrderDate.findOneAndDelete({ orderNo: req.params.orderNo });
+        res.status(200).json({ message: 'Deleted Forever' });
+    } catch (error) { res.status(500).json({ message: 'Error' }); }
 });
 
 module.exports = router;
