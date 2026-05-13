@@ -96,6 +96,8 @@ router.post('/save-dates', async (req, res) => {
         
         let updateObj = {};
         updateObj[department] = fabricItems; 
+
+        if (orderStatus) updateObj.orderStatus = orderStatus;
         
         const updatedRecord = await OrderDate.findOneAndUpdate(
             { orderNo: orderNo }, 
@@ -120,6 +122,14 @@ router.get('/all-dates', async (req, res) => {
     } catch (error) {
         res.status(500).json({ message: 'Server Error' });
     }
+});
+
+// 🟢 API 6: Delete Order Forever
+router.delete('/delete-order/:orderNo', async (req, res) => {
+    try {
+        await OrderDate.findOneAndDelete({ orderNo: req.params.orderNo });
+        res.status(200).json({ message: 'Order deleted' });
+    } catch (error) { res.status(500).json({ message: 'Server Error' }); }
 });
 
 module.exports = router;
