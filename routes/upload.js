@@ -63,12 +63,23 @@ router.get('/all', async (req, res) => {
 });
 
 // ==========================================
-// NEW API: Clear All Database Records (Danger Zone)
+// SUPER API: Clear Entire Database & All Excel Files (Total Wipe)
 // ==========================================
 router.delete('/clear-all-planning', async (req, res) => {
     try {
         await OrderDate.deleteMany({});
-        res.status(200).json({ message: 'All planning data cleared successfully' });
+        
+        await File.deleteMany({});
+
+        const directory = path.join(__dirname, '../uploads');
+        if (fs.existsSync(directory)) {
+            const files = fs.readdirSync(directory);
+            for (const file of files) {
+                fs.unlinkSync(path.join(directory, file));
+            }
+        }
+
+        res.status(200).json({ message: 'Entire database and all files cleared successfully' });
     } catch (error) {
         console.error("Clear DB Error:", error);
         res.status(500).json({ message: 'Error: ' + error.message });
