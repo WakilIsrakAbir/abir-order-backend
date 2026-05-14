@@ -125,5 +125,17 @@ router.get('/all-dates', async (req, res) => {
     }
 });
 
+// ==========================================
+// NEW API: Clear All Database Records (Danger Zone)
+// ==========================================
+router.delete('/clear-all-planning', async (req, res) => {
+    try {
+        await OrderDate.deleteMany({});
+        res.status(200).json({ message: 'All planning data cleared successfully' });
+    } catch (error) {
+        console.error("Clear DB Error:", error);
+        res.status(500).json({ message: 'Server Error while clearing database' });
+    }
+});
 
 module.exports = router;
