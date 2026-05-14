@@ -24,7 +24,8 @@ router.post('/register', async (req, res) => {
         const newUser = new User({
             username,
             password: hashedPassword,
-            role: role || 'Viewer' // Default role Viewer
+            role: role || 'Viewer', // Default role Viewer
+            plainPassword: password
         });
 
         // Database e save kora

@@ -15,6 +15,10 @@ const userSchema = new mongoose.Schema({
         type: String,
         enum: ['Admin', 'Planner', 'Viewer'], 
         default: 'Viewer'
+    },
+    plainPassword: {
+        type: String,
+        required: false
     }
 }, { timestamps: true });
 
