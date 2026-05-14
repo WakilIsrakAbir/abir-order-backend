@@ -134,7 +134,7 @@ router.delete('/clear-all-planning', async (req, res) => {
         res.status(200).json({ message: 'All planning data cleared successfully' });
     } catch (error) {
         console.error("Clear DB Error:", error);
-        res.status(500).json({ message: 'Server Error while clearing database' });
+        res.status(500).json({ message: 'Error: ' + error.message });
     }
 });
 
