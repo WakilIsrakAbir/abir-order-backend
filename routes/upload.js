@@ -125,4 +125,17 @@ router.get('/all-dates', async (req, res) => {
     }
 });
 
+// ==========================================
+// API: Delete Specific Order from Database
+// ==========================================
+router.delete('/delete-order/:orderNo', async (req, res) => {
+    try {
+        const orderId = req.params.orderNo;
+        await OrderDate.findOneAndDelete({ orderNo: orderId });
+        res.status(200).json({ message: 'Order deleted successfully from database' });
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
 module.exports = router;
