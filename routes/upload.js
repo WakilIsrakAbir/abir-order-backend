@@ -97,8 +97,8 @@ router.post('/save-dates', async (req, res) => {
         let updateObj = {};
         updateObj[department] = fabricItems; 
         
-        if (orderStatus) updateObj.orderStatus = orderStatus;
-        if (completedDate !== undefined) updateObj.completedDate = completedDate;
+        if (orderStatus) updateObj[`orderStatus.${department}`] = orderStatus;
+        if (completedDate !== undefined) updateObj[`completedDate.${department}`] = completedDate;
         
         const updatedRecord = await OrderDate.findOneAndUpdate(
             { orderNo: orderNo }, 
