@@ -116,10 +116,16 @@ router.delete('/:id', async (req, res) => {
 // ==========================================
 router.post('/save-dates', async (req, res) => {
     try {
-        const { orderNo, department, fabricItems, orderStatus, completedDate } = req.body;
+        const { orderNo, department, fabricItems, orderStatus, completedDate, actualData } = req.body;
         
         let updateObj = {};
-        updateObj[department] = fabricItems; 
+        
+        // Support for Plan Vs Actual Tracking
+        if (actualData) {
+            updateObj[department] = actualData;
+        } else {
+            updateObj[department] = fabricItems; 
+        }
         
         if (orderStatus) updateObj[`${department}Status`] = orderStatus;
         if (completedDate !== undefined) updateObj[`${department}CompletedDate`] = completedDate;
