@@ -1,46 +1,73 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
+const mongoose = require('mongoose');
 const File = require('../models/File');
-const OrderDate = require('../models/OrderDate'); 
+const OrderDate = require('../models/OrderDate');
 
-// ১. Multer Setup
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = './uploads/';
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir);
-        }
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + '-' + file.originalname);
-    }
-});
-
+// ১. Multer Setup - Memory Storage (disk-e save na kore memory-te rakhbe)
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
+// ২. GridFS Bucket - MongoDB-te file save korar jonno
+let gfsBucket;
+function getGridFSBucket() {
+    if (!gfsBucket && mongoose.connection.readyState === 1) {
+        gfsBucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+            bucketName: 'uploads'
+        });
+    }
+    return gfsBucket;
+}
+
+// Reset bucket on reconnection (jodi connection restart hoy)
+mongoose.connection.on('connected', () => {
+    gfsBucket = null; // Next call to getGridFSBucket() will create a fresh bucket
+});
+
 // ==========================================
-// API 1: File Upload (Version Control Active - NO OVERWRITE)
+// API 1: File Upload (GridFS - MongoDB-te save hobe!)
 // ==========================================
 router.post('/upload', upload.single('document'), async (req, res) => {
     try {
         const { uploadedBy, role, category } = req.body;
-        const originalName = req.file.originalname; 
-        const savedName = req.file.filename;        
+        const originalName = req.file.originalname;
+        const savedName = Date.now() + '-' + originalName;
 
-        // পুরনো ফাইল আর ডিলিট হবে না। সব ফাইল ভার্সন হিসেবে জমা হবে!
+        const bucket = getGridFSBucket();
+        if (!bucket) {
+            return res.status(503).json({ message: 'Database not ready. Please try again.' });
+        }
+
+        // File buffer ke GridFS-e stream kore save kori
+        const uploadStream = bucket.openUploadStream(savedName, {
+            contentType: req.file.mimetype,
+            metadata: {
+                originalName: originalName,
+                uploadedBy: uploadedBy,
+                category: category || 'General'
+            }
+        });
+
+        // Buffer theke GridFS-e write kori
+        await new Promise((resolve, reject) => {
+            uploadStream.on('finish', resolve);
+            uploadStream.on('error', reject);
+            uploadStream.end(req.file.buffer);
+        });
+
+        // File metadata amader File model-e save kori (age jerakam chilo)
         const newFile = new File({
             originalName: originalName,
             savedName: savedName,
             uploadedBy: uploadedBy,
             role: role,
-            category: category || 'General'
+            category: category || 'General',
+            size: req.file.size
         });
-        
+
         await newFile.save();
+        console.log(`✅ File saved to GridFS: ${savedName}`);
         return res.status(200).json({ message: 'File Uploaded and History Saved!', file: newFile });
 
     } catch (error) {
@@ -50,11 +77,10 @@ router.post('/upload', upload.single('document'), async (req, res) => {
 });
 
 // ==========================================
-// API 2: Get All Files
+// API 2: Get All Files (eita age jemon chilo temon-i)
 // ==========================================
 router.get('/all', async (req, res) => {
     try {
-        // Sort by newest first
         const files = await File.find().sort({ createdAt: -1 });
         res.status(200).json(files);
     } catch (error) {
@@ -63,20 +89,71 @@ router.get('/all', async (req, res) => {
 });
 
 // ==========================================
-// SUPER API: Clear Entire Database & All Excel Files (Total Wipe)
+// API 2.5: Download/Serve File from GridFS
+// ==========================================
+router.get('/download/:filename', async (req, res) => {
+    try {
+        const bucket = getGridFSBucket();
+        if (!bucket) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+
+        const filename = req.params.filename;
+
+        // Check if file exists in GridFS
+        const files = await mongoose.connection.db
+            .collection('uploads.files')
+            .find({ filename: filename })
+            .toArray();
+
+        if (!files || files.length === 0) {
+            return res.status(404).json({ message: 'File not found in storage' });
+        }
+
+        // Set proper content type
+        const file = files[0];
+        res.set('Content-Type', file.contentType || 'application/octet-stream');
+        res.set('Content-Disposition', `inline; filename="${file.metadata?.originalName || filename}"`);
+
+        // Stream file from GridFS to response
+        const downloadStream = bucket.openDownloadStreamByName(filename);
+
+        downloadStream.on('error', (err) => {
+            console.error('GridFS download error:', err);
+            if (!res.headersSent) {
+                res.status(404).json({ message: 'File not found' });
+            }
+        });
+
+        downloadStream.pipe(res);
+
+    } catch (error) {
+        console.error("Download Error:", error);
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Server Error during download' });
+        }
+    }
+});
+
+// ==========================================
+// SUPER API: Clear Entire Database & All GridFS Files (Total Wipe)
 // ==========================================
 router.delete('/clear-all-planning', async (req, res) => {
     try {
+        // 1. OrderDate collection clear
         await OrderDate.deleteMany({});
-        
+
+        // 2. File metadata collection clear
         await File.deleteMany({});
 
-        const directory = path.join(__dirname, '../uploads');
-        if (fs.existsSync(directory)) {
-            const files = fs.readdirSync(directory);
-            for (const file of files) {
-                fs.unlinkSync(path.join(directory, file));
-            }
+        // 3. GridFS collections clear (uploads.files + uploads.chunks)
+        const db = mongoose.connection.db;
+        try {
+            await db.collection('uploads.files').deleteMany({});
+            await db.collection('uploads.chunks').deleteMany({});
+            console.log('✅ GridFS files cleared');
+        } catch (gridErr) {
+            console.log('GridFS collections may not exist yet:', gridErr.message);
         }
 
         res.status(200).json({ message: 'Entire database and all files cleared successfully' });
@@ -87,7 +164,7 @@ router.delete('/clear-all-planning', async (req, res) => {
 });
 
 // ==========================================
-// API 3: Delete File
+// API 3: Delete Single File (GridFS + metadata)
 // ==========================================
 router.delete('/:id', async (req, res) => {
     try {
@@ -98,11 +175,25 @@ router.delete('/:id', async (req, res) => {
             return res.status(404).json({ message: 'File not found in database' });
         }
 
-        const filePath = path.join(__dirname, '../uploads', fileRecord.savedName);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+        // GridFS theke file delete kori
+        const bucket = getGridFSBucket();
+        if (bucket) {
+            try {
+                const gridFSFiles = await mongoose.connection.db
+                    .collection('uploads.files')
+                    .find({ filename: fileRecord.savedName })
+                    .toArray();
+
+                for (const f of gridFSFiles) {
+                    await bucket.delete(f._id);
+                }
+                console.log(`✅ Deleted from GridFS: ${fileRecord.savedName}`);
+            } catch (gridErr) {
+                console.log('GridFS delete warning:', gridErr.message);
+            }
         }
 
+        // File metadata delete
         await File.findByIdAndDelete(fileId);
         res.status(200).json({ message: 'File deleted successfully' });
     } catch (error) {

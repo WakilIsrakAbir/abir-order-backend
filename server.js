@@ -16,7 +16,7 @@ mongoose.connect(process.env.MONGO_URI)
 
 // 2. Basic Test Route
 app.get('/', (req, res) => {
-    res.send('Backend Server is Running Perfectly!');
+    res.send('Backend Server is Running Perfectly! (GridFS Active)');
 });
 
 // 3. API Routes Connection (Smart Check)
@@ -26,13 +26,60 @@ try {
     app.use('/api/auth', authRoutes);
     console.log("✅ Auth API Routes Connected!");
 
-    // File Upload Routes (Notun add kora holo)
+    // File Upload Routes (GridFS enabled)
     const uploadRoutes = require('./routes/upload');
     app.use('/api/files', uploadRoutes);
     
-    // Uploads folder ke open kora holo jate frontend theke file download kora jay
-    app.use('/uploads', express.static('uploads'));
-    console.log("✅ File Upload API Connected!");
+    // GridFS File Serving Route
+    // Ager express.static('uploads') er bodole ekhon GridFS theke file serve hobe
+    // Frontend er URL pattern same thakbe: /uploads/filename.xlsx
+    app.get('/uploads/:filename', async (req, res) => {
+        try {
+            if (mongoose.connection.readyState !== 1) {
+                return res.status(503).json({ message: 'Database not ready' });
+            }
+
+            const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+                bucketName: 'uploads'
+            });
+
+            const filename = req.params.filename;
+
+            // GridFS-e file ache ki na check kori
+            const files = await mongoose.connection.db
+                .collection('uploads.files')
+                .find({ filename: filename })
+                .toArray();
+
+            if (!files || files.length === 0) {
+                return res.status(404).json({ message: 'File not found' });
+            }
+
+            // Content type set kori
+            const file = files[0];
+            res.set('Content-Type', file.contentType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+            // GridFS theke file stream kore pathay dei
+            const downloadStream = bucket.openDownloadStreamByName(filename);
+
+            downloadStream.on('error', (err) => {
+                console.error('GridFS stream error:', err);
+                if (!res.headersSent) {
+                    res.status(404).json({ message: 'File not found in GridFS' });
+                }
+            });
+
+            downloadStream.pipe(res);
+
+        } catch (error) {
+            console.error('File serve error:', error);
+            if (!res.headersSent) {
+                res.status(500).json({ message: 'Error serving file' });
+            }
+        }
+    });
+
+    console.log("✅ File Upload API Connected (GridFS Mode)!");
 
 } catch (error) {
     console.log("❌ Route connect korte somossa hoyeche!");
