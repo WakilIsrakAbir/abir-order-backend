@@ -13,7 +13,7 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['Admin', 'Planner', 'Viewer'], 
+        enum: ['Admin', 'Approver', 'Planner', 'Viewer'], 
         default: 'Viewer'
     },
     plainPassword: {
