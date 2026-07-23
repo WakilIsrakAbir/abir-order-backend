@@ -224,7 +224,7 @@ router.post('/save-dates', async (req, res) => {
         const updatedRecord = await OrderDate.findOneAndUpdate(
             { orderNo: orderNo }, 
             { $set: updateObj },
-            { new: true, upsert: true } 
+            { returnDocument: 'after', upsert: true } 
         );
         
         res.status(200).json({ message: 'Planning Data saved successfully!', data: updatedRecord });

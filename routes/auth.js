@@ -131,7 +131,7 @@ router.put('/user/:id', async (req, res) => {
             updateData.plainPassword = password;
         }
 
-        await User.findByIdAndUpdate(userId, updateData, { new: true });
+        await User.findByIdAndUpdate(userId, updateData, { returnDocument: 'after' });
         res.status(200).json({ message: "User updated successfully!" });
     } catch (error) {
         console.error(error);
