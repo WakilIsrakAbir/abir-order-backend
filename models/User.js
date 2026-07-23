@@ -16,6 +16,18 @@ const userSchema = new mongoose.Schema({
         enum: ['Admin', 'Approver', 'Planner', 'Viewer'], 
         default: 'Viewer'
     },
+    status: {
+        type: String,
+        default: 'active'
+    },
+    permissions: {
+        type: mongoose.Schema.Types.Mixed,
+        default: {}
+    },
+    lastActive: {
+        type: Date,
+        default: Date.now
+    },
     plainPassword: {
         type: String,
         required: false

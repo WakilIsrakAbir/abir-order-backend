@@ -8,7 +8,7 @@ const User = require('../models/User'); // Amader User model
 // Endpoint: POST /api/auth/register
 router.post('/register', async (req, res) => {
     try {
-        const { username, password, role } = req.body;
+        const { username, password, role, status, permissions } = req.body;
 
         // Check korbo username age theke ache kina
         const existingUser = await User.findOne({ username });
@@ -25,6 +25,9 @@ router.post('/register', async (req, res) => {
             username,
             password: hashedPassword,
             role: role || 'Viewer', // Default role Viewer
+            status: status || 'active',
+            permissions: permissions || {},
+            lastActive: Date.now(),
             plainPassword: password
         });
 
@@ -64,13 +67,19 @@ router.post('/login', async (req, res) => {
 
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1d' }); // 1 din por expire hobe
 
+        // Update lastActive
+        user.lastActive = Date.now();
+        await user.save();
+
         // Login success hole info pathano
         res.status(200).json({
             message: "সফলভাবে লগইন হয়েছে!",
             token,
             user: {
                 username: user.username,
-                role: user.role
+                role: user.role,
+                status: user.status,
+                permissions: user.permissions
             }
         });
 
@@ -103,6 +112,46 @@ router.delete('/user/:id', async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Failed to delete user!" });
+    }
+});
+
+// 5. UPDATE USER API (To edit user profile and permissions)
+// Endpoint: PUT /api/auth/user/:id
+router.put('/user/:id', async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const { username, password, role, status, permissions } = req.body;
+        
+        let updateData = { role, status, permissions };
+        if (username) updateData.username = username;
+
+        if (password) {
+            const salt = await bcrypt.genSalt(10);
+            updateData.password = await bcrypt.hash(password, salt);
+            updateData.plainPassword = password;
+        }
+
+        await User.findByIdAndUpdate(userId, updateData, { new: true });
+        res.status(200).json({ message: "User updated successfully!" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Failed to update user!" });
+    }
+});
+
+// 6. HEARTBEAT API (To keep user active)
+// Endpoint: POST /api/auth/heartbeat
+router.post('/heartbeat', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(" ")[1];
+        if (!token) return res.status(401).json({ message: "No token provided" });
+        
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        await User.findByIdAndUpdate(decoded.userId, { lastActive: Date.now() });
+        res.status(200).json({ message: "Active status updated" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Failed to update heartbeat" });
     }
 });
 
