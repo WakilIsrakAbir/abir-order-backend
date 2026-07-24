@@ -55,9 +55,10 @@ try {
                 return res.status(404).json({ message: 'File not found' });
             }
 
-            // Content type set kori
+            // Content type and Cache headers set kori
             const file = files[0];
             res.set('Content-Type', file.contentType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.set('Cache-Control', 'public, max-age=31536000, immutable');
 
             // GridFS theke file stream kore pathay dei
             const downloadStream = bucket.openDownloadStreamByName(filename);
