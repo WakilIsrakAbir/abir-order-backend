@@ -94,7 +94,7 @@ router.post('/login', async (req, res) => {
 router.get('/users', async (req, res) => {
     try {
         // Fetch all users from the database, but exclude their passwords for security
-        const users = await User.find().select('-password'); 
+        const users = await User.find().select('-password').lean();
         res.status(200).json(users);
     } catch (error) {
         console.error(error);

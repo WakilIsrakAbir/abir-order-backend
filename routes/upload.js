@@ -97,7 +97,7 @@ router.post('/upload', upload.single('document'), async (req, res) => {
 // ==========================================
 router.get('/all', async (req, res) => {
     try {
-        const files = await File.find().sort({ createdAt: -1 });
+        const files = await File.find().sort({ createdAt: -1 }).lean();
         res.status(200).json(files);
     } catch (error) {
         res.status(500).json({ message: 'Server Error' });
@@ -255,7 +255,7 @@ router.post('/save-dates', async (req, res) => {
 // ==========================================
 router.get('/all-dates', async (req, res) => {
     try {
-        const dates = await OrderDate.find();
+        const dates = await OrderDate.find().lean();
         res.status(200).json(dates);
     } catch (error) {
         res.status(500).json({ message: 'Server Error' });

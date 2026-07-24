@@ -33,15 +33,23 @@ try {
     // GridFS File Serving Route
     // Ager express.static('uploads') er bodole ekhon GridFS theke file serve hobe
     // Frontend er URL pattern same thakbe: /uploads/filename.xlsx
+    let serverGfsBucket;
+    mongoose.connection.on('connected', () => {
+        serverGfsBucket = null;
+    });
+
     app.get('/uploads/:filename', async (req, res) => {
         try {
             if (mongoose.connection.readyState !== 1) {
                 return res.status(503).json({ message: 'Database not ready' });
             }
 
-            const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
-                bucketName: 'uploads'
-            });
+            if (!serverGfsBucket) {
+                serverGfsBucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+                    bucketName: 'uploads'
+                });
+            }
+            const bucket = serverGfsBucket;
 
             const filename = req.params.filename;
 
