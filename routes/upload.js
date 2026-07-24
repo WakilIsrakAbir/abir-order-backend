@@ -277,20 +277,9 @@ router.get('/all-dates', async (req, res) => {
         }
         
         res.set('Cache-Control', 'private, max-age=15');
-        res.set('Content-Type', 'application/json');
-        res.status(200);
-        res.write('[');
         
-        let first = true;
-        const cursor = query.lean().cursor();
-        for await (const doc of cursor) {
-            if (!first) res.write(',');
-            res.write(JSON.stringify(doc));
-            first = false;
-        }
-        
-        res.write(']');
-        res.end();
+        const docs = await query.lean();
+        res.status(200).json(docs);
     } catch (error) {
         console.error('Error fetching all-dates:', error);
         if (!res.headersSent) {
