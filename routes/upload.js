@@ -5,8 +5,19 @@ const mongoose = require('mongoose');
 const File = require('../models/File');
 const OrderDate = require('../models/OrderDate');
 
-// ১. Multer Setup - Memory Storage (disk-e save na kore memory-te rakhbe)
-const storage = multer.memoryStorage();
+// ১. Multer Setup - Disk Storage (memory bachanot jonno)
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, os.tmpdir()); // Temporarily save to system temp directory
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
 const upload = multer({ storage: storage });
 
 // ২. GridFS Bucket - MongoDB-te file save korar jonno
@@ -32,14 +43,14 @@ router.post('/upload', upload.single('document'), async (req, res) => {
     try {
         const { uploadedBy, role, category } = req.body;
         const originalName = req.file.originalname;
-        const savedName = Date.now() + '-' + originalName;
+        const savedName = req.file.filename;
 
         const bucket = getGridFSBucket();
         if (!bucket) {
             return res.status(503).json({ message: 'Database not ready. Please try again.' });
         }
 
-        // File buffer ke GridFS-e stream kore save kori
+        // File stream disk theke GridFS-e pipe kori
         const uploadStream = bucket.openUploadStream(savedName, {
             contentType: req.file.mimetype,
             metadata: {
@@ -49,12 +60,17 @@ router.post('/upload', upload.single('document'), async (req, res) => {
             }
         });
 
-        // Buffer theke GridFS-e write kori
+        // Disk theke file pore GridFS-e write kori
+        const readStream = fs.createReadStream(req.file.path);
+
         await new Promise((resolve, reject) => {
-            uploadStream.on('finish', resolve);
-            uploadStream.on('error', reject);
-            uploadStream.end(req.file.buffer);
+            readStream.pipe(uploadStream)
+                .on('finish', resolve)
+                .on('error', reject);
         });
+
+        // Temporary disk file delete kore dei memory/disk space bachanot jonno
+        fs.unlinkSync(req.file.path);
 
         // File metadata amader File model-e save kori (age jerakam chilo)
         const newFile = new File({

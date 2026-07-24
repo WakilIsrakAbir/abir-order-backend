@@ -150,7 +150,10 @@ router.post('/heartbeat', async (req, res) => {
         await User.findByIdAndUpdate(decoded.userId, { lastActive: Date.now() });
         res.status(200).json({ message: "Active status updated" });
     } catch (error) {
-        console.error(error);
+        if (error.name === 'TokenExpiredError') {
+            return res.status(401).json({ message: "Token expired, please login again" });
+        }
+        console.error("Heartbeat error:", error.message);
         res.status(500).json({ message: "Failed to update heartbeat" });
     }
 });
