@@ -289,5 +289,61 @@ router.get('/all-dates', async (req, res) => {
         }
     }
 });
+// Fetch specific dates based on an array of order numbers
+router.post('/specific-dates', async (req, res) => {
+    try {
+        const { orderNos, dept } = req.body;
+        if (!orderNos || !Array.isArray(orderNos) || orderNos.length === 0) {
+            return res.status(200).json([]);
+        }
+
+        let projection = { orderNo: 1, orderData: 1 };
+        
+        if (dept) {
+            projection[dept] = 1;
+            projection[`${dept}Status`] = 1;
+            projection[`${dept}CompletedDate`] = 1;
+        } else {
+            ['knitting', 'dyeing', 'finishing', 'delivery', 'yd'].forEach(d => {
+                projection[d] = 1;
+                projection[`${d}Status`] = 1;
+                projection[`${d}CompletedDate`] = 1;
+            });
+        }
+
+        const docs = await OrderDate.find({ orderNo: { $in: orderNos } }, projection).lean();
+        res.status(200).json(docs);
+    } catch (error) {
+        console.error('Error fetching specific-dates:', error);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// Fetch dates for a specific department only (used by Actual Tracking)
+router.get('/dept-dates/:dept', async (req, res) => {
+    try {
+        const dept = req.params.dept;
+        const validDepts = ['knitting', 'dyeing', 'finishing', 'delivery', 'yd'];
+        if (!validDepts.includes(dept)) {
+            return res.status(400).json({ message: 'Invalid department' });
+        }
+
+        let projection = { orderNo: 1, orderData: 1 };
+        projection[dept] = 1;
+        projection[`${dept}Status`] = 1;
+        projection[`${dept}CompletedDate`] = 1;
+
+        // Fetch ALL documents but only the projected fields, which is fast.
+        // Then filter in memory in Node.js instead of making MongoDB do a full collection scan 
+        // with complex array checks on unindexed fields.
+        const allDocs = await OrderDate.find({}, projection).lean();
+        const filteredDocs = allDocs.filter(doc => doc[dept] && Array.isArray(doc[dept]) && doc[dept].length > 0);
+        
+        res.status(200).json(filteredDocs);
+    } catch (error) {
+        console.error('Error fetching dept-dates:', error);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
 
 module.exports = router;
