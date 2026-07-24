@@ -276,11 +276,28 @@ router.get('/all-dates', async (req, res) => {
             query = OrderDate.find({}, projection);
         }
         
-        const dates = await query.lean();
         res.set('Cache-Control', 'private, max-age=15');
-        res.status(200).json(dates);
+        res.set('Content-Type', 'application/json');
+        res.status(200);
+        res.write('[');
+        
+        let first = true;
+        const cursor = query.lean().cursor();
+        for await (const doc of cursor) {
+            if (!first) res.write(',');
+            res.write(JSON.stringify(doc));
+            first = false;
+        }
+        
+        res.write(']');
+        res.end();
     } catch (error) {
-        res.status(500).json({ message: 'Server Error' });
+        console.error('Error fetching all-dates:', error);
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Server Error' });
+        } else {
+            res.end();
+        }
     }
 });
 
