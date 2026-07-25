@@ -290,4 +290,75 @@ router.get('/tracking/:dept', async (req, res) => {
     }
 });
 
+// ==========================================
+// GET /api/orders/report-download/:dept — Generate and download Excel report directly
+// No JSON response — streams XLSX file to client
+// ==========================================
+router.get('/report-download/:dept', async (req, res) => {
+    try {
+        const XLSX = require('xlsx');
+        const { dept } = req.params;
+
+        const statusField = `${dept}PlanStatus`;
+        const itemsField = `${dept}Items`;
+
+        const filter = {
+            [statusField]: { $in: ['Confirm', 'Tentative'] },
+            [itemsField]: { $exists: true, $ne: [] }
+        };
+
+        const orders = await Order.find(filter, { orderNo: 1, [itemsField]: 1, buyer: 1 }).lean();
+        const orderNos = orders.map(o => o.orderNo);
+
+        // Fetch plan data
+        const planDocs = await OrderDate.find(
+            { orderNo: { $in: orderNos } },
+            { orderNo: 1, [dept]: 1 }
+        ).lean();
+        const planMap = {};
+        planDocs.forEach(p => { planMap[p.orderNo] = p; });
+
+        // Build rows for Excel
+        let allRows = [];
+        orders.forEach(order => {
+            const planData = planMap[order.orderNo];
+            const deptItems = planData && planData[dept] ? planData[dept] : [];
+
+            deptItems.forEach(item => {
+                if (item.planType === 'Confirm' || item.planType === 'Tentative') {
+                    let row = { ...(item.itemData || {}) };
+                    row['OrderNo'] = order.orderNo;
+                    row['Buyer'] = row['Buyer'] || order.buyer || '';
+                    row['Plan Start Date'] = item.startDate || '';
+                    row['Plan End Date'] = item.endDate || '';
+                    row['Plan Type'] = item.planType || '';
+                    row['Limitation'] = item.limitation || '';
+                    row['Remarks'] = item.remarks || '';
+                    allRows.push(row);
+                }
+            });
+        });
+
+        if (allRows.length === 0) {
+            return res.status(404).json({ message: 'No data to export' });
+        }
+
+        // Generate Excel
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(allRows);
+        XLSX.utils.book_append_sheet(wb, ws, `${dept}_Report`);
+
+        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        const dateStr = new Date().toISOString().split('T')[0];
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${dept.toUpperCase()}_Report_${dateStr}.xlsx"`);
+        res.send(buf);
+
+    } catch (error) {
+        console.error('Report download error:', error);
+        res.status(500).json({ message: 'Error generating report' });
+    }
+});
+
 module.exports = router;
