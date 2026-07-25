@@ -317,18 +317,18 @@ router.get('/dept-dates/:dept', async (req, res) => {
             return res.status(400).json({ message: 'Invalid department' });
         }
 
-        let projection = { orderNo: 1, orderData: 1 };
+        // Only fetch documents that have data for this department (skip empty ones)
+        const filter = {};
+        filter[dept] = { $exists: true, $ne: [], $type: 'array' };
+
+        const projection = { orderNo: 1 };
         projection[dept] = 1;
         projection[`${dept}Status`] = 1;
         projection[`${dept}CompletedDate`] = 1;
+        projection[`${dept}Actual`] = 1;
 
-        // Fetch ALL documents but only the projected fields, which is fast.
-        // Then filter in memory in Node.js instead of making MongoDB do a full collection scan 
-        // with complex array checks on unindexed fields.
-        const allDocs = await OrderDate.find({}, projection).lean();
-        const filteredDocs = allDocs.filter(doc => doc[dept] && Array.isArray(doc[dept]) && doc[dept].length > 0);
-        
-        res.status(200).json(filteredDocs);
+        const docs = await OrderDate.find(filter, projection).lean();
+        res.status(200).json(docs);
     } catch (error) {
         console.error('Error fetching dept-dates:', error);
         res.status(500).json({ message: 'Server Error' });
