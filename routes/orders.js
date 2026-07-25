@@ -227,8 +227,9 @@ router.get('/tracking/:dept', async (req, res) => {
         const { dept } = req.params;
         const { page = 1, limit = 10, buyer = '', search = '' } = req.query;
         const pageNum = Math.max(1, parseInt(page));
-        const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
-        const skip = (pageNum - 1) * limitNum;
+        const limitNum = parseInt(limit);
+        const noLimit = limitNum === 0; // limit=0 means fetch ALL (for reports)
+        const skip = noLimit ? 0 : (pageNum - 1) * limitNum;
 
         const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
         const statusField = `${dbDept}PlanStatus`;
@@ -238,13 +239,14 @@ router.get('/tracking/:dept', async (req, res) => {
         if (buyer) orderFilter.buyer = { $regex: buyer, $options: 'i' };
         if (search) orderFilter.orderNo = { $regex: search, $options: 'i' };
 
-        // Get paginated confirmed orders from Order collection
+        // Get confirmed orders from Order collection
+        let query = Order.find(orderFilter, { orderNo: 1, buyer: 1, bookingDate: 1 }).sort({ orderNo: -1 });
+        if (!noLimit) {
+            query = query.skip(skip).limit(limitNum);
+        }
+
         const [confirmedOrders, total] = await Promise.all([
-            Order.find(orderFilter, { orderNo: 1, buyer: 1, bookingDate: 1 })
-                .sort({ orderNo: -1 })
-                .skip(skip)
-                .limit(limitNum)
-                .lean(),
+            query.lean(),
             Order.countDocuments(orderFilter)
         ]);
 
@@ -277,9 +279,9 @@ router.get('/tracking/:dept', async (req, res) => {
             planDocs,
             orderMap,
             total,
-            page: pageNum,
-            limit: limitNum,
-            totalPages: Math.ceil(total / limitNum),
+            page: noLimit ? 1 : pageNum,
+            limit: noLimit ? total : limitNum,
+            totalPages: noLimit ? 1 : Math.ceil(total / limitNum),
             buyers
         });
     } catch (error) {
