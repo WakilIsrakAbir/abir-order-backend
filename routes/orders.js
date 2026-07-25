@@ -185,9 +185,9 @@ router.get('/buyers/:dept', async (req, res) => {
 router.get('/report/:dept', async (req, res) => {
     try {
         const { dept } = req.params;
-        const { page = 1, limit = 20 } = req.query;
+        const { page = 1, limit = 2000 } = req.query;
         const pageNum = Math.max(1, parseInt(page));
-        const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+        const limitNum = Math.min(5000, Math.max(1, parseInt(limit)));
         const skip = (pageNum - 1) * limitNum;
 
         const statusField = `${dept}PlanStatus`;
