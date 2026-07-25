@@ -121,7 +121,7 @@ router.get('/', async (req, res) => {
             page: pageNum,
             limit: limitNum,
             totalPages: Math.ceil(total / limitNum),
-            buyers: buyersList.filter(b => b && b !== 'N/A' && b !== '').sort()
+            buyers: [...new Set(buyersList.filter(b => b && b.trim() !== '' && b !== 'N/A').map(b => b.trim().toUpperCase()))].sort()
         });
     } catch (error) {
         console.error('Error fetching orders:', error);
@@ -225,21 +225,12 @@ router.get('/report/:dept', async (req, res) => {
 router.get('/tracking/:dept', async (req, res) => {
     try {
         const { dept } = req.params;
-        const { page = 1, limit = 50 } = req.query;
-        const pageNum = Math.max(1, parseInt(page));
-        const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
-        const skip = (pageNum - 1) * limitNum;
 
         const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
 
-        // Find OrderDate docs that have confirmed plans for this dept
+        // Find ALL OrderDate docs that have plan data for this dept (no limit)
         const deptFilter = {};
-        if (dept === 'deliveryfloor') {
-            // Floor plans: items with floorPlanType = Confirm or Tentative
-            deptFilter[dbDept] = { $exists: true, $ne: [] };
-        } else {
-            deptFilter[dbDept] = { $exists: true, $ne: [] };
-        }
+        deptFilter[dbDept] = { $exists: true, $ne: [] };
 
         const [planDocs, total] = await Promise.all([
             OrderDate.find(deptFilter, {
@@ -248,7 +239,7 @@ router.get('/tracking/:dept', async (req, res) => {
                 [`${dbDept}Status`]: 1,
                 [`${dbDept}CompletedDate`]: 1,
                 [`${dbDept}Actual`]: 1
-            }).skip(skip).limit(limitNum).lean(),
+            }).lean(),
             OrderDate.countDocuments(deptFilter)
         ]);
 
@@ -265,10 +256,7 @@ router.get('/tracking/:dept', async (req, res) => {
         res.status(200).json({
             planDocs,
             orderMap,
-            total,
-            page: pageNum,
-            limit: limitNum,
-            totalPages: Math.ceil(total / limitNum)
+            total
         });
     } catch (error) {
         console.error('Error fetching tracking:', error);

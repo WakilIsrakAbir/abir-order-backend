@@ -256,8 +256,30 @@ router.post('/save-dates', async (req, res) => {
         
         res.status(200).json({ message: 'Planning Data saved successfully!', data: updatedRecord });
 
-        // Recalc plan statuses in background (don't block response)
-        recalcPlanStatuses().catch(e => console.error('Recalc error:', e.message));
+        // Update plan status for just this order (fast — single doc update)
+        try {
+            const dept = department.replace('Actual', ''); // handle 'knittingActual' → 'knitting'
+            if (['knitting', 'dyeing', 'finishing', 'delivery', 'yd'].includes(dept)) {
+                const update = {};
+                if (orderStatus === 'Completed') {
+                    update[`${dept}PlanStatus`] = 'Completed';
+                } else if (fabricItems && Array.isArray(fabricItems) && fabricItems.length > 0) {
+                    let hasSelect = false, hasTentative = false, confirmCount = 0;
+                    fabricItems.forEach(item => {
+                        if (!item.planType || item.planType === '' || item.planType === 'Select') hasSelect = true;
+                        else if (item.planType === 'Tentative') hasTentative = true;
+                        else if (item.planType === 'Confirm') confirmCount++;
+                    });
+                    if (hasSelect) update[`${dept}PlanStatus`] = 'Pending';
+                    else if (hasTentative) update[`${dept}PlanStatus`] = 'Tentative';
+                    else if (confirmCount === fabricItems.length) update[`${dept}PlanStatus`] = 'Confirm';
+                    else update[`${dept}PlanStatus`] = 'Pending';
+                }
+                if (Object.keys(update).length > 0) {
+                    await Order.updateOne({ orderNo }, { $set: update });
+                }
+            }
+        } catch (e) { console.error('Status update error:', e.message); }
     } catch (error) {
         console.error("Save Dates Error:", error);
         res.status(500).json({ message: 'Server Error while saving data' });
