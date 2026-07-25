@@ -225,64 +225,62 @@ router.get('/report/:dept', async (req, res) => {
 router.get('/tracking/:dept', async (req, res) => {
     try {
         const { dept } = req.params;
+        const { page = 1, limit = 10, buyer = '', search = '' } = req.query;
+        const pageNum = Math.max(1, parseInt(page));
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+        const skip = (pageNum - 1) * limitNum;
 
         const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
         const statusField = `${dbDept}PlanStatus`;
 
-        // Source 1: Orders with Confirm status in Order collection (from Excel)
-        const confirmedOrders = await Order.find(
-            { [statusField]: 'Confirm' },
-            { orderNo: 1, buyer: 1, bookingDate: 1 }
-        ).lean();
+        // Build filter for Order collection
+        const orderFilter = { [statusField]: 'Confirm' };
+        if (buyer) orderFilter.buyer = { $regex: buyer, $options: 'i' };
+        if (search) orderFilter.orderNo = { $regex: search, $options: 'i' };
 
-        const allOrderNos = new Set(confirmedOrders.map(o => o.orderNo));
+        // Get paginated confirmed orders from Order collection
+        const [confirmedOrders, total] = await Promise.all([
+            Order.find(orderFilter, { orderNo: 1, buyer: 1, bookingDate: 1 })
+                .sort({ orderNo: -1 })
+                .skip(skip)
+                .limit(limitNum)
+                .lean(),
+            Order.countDocuments(orderFilter)
+        ]);
 
-        // Source 2: OrderDate docs where ALL items are confirmed (backend saved plans)
-        const allPlanDocs = await OrderDate.find(
-            { [dbDept]: { $exists: true, $ne: [] } },
-            { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [`${dbDept}Actual`]: 1 }
-        ).lean();
+        const orderNos = confirmedOrders.map(o => o.orderNo);
 
-        // Filter: keep only docs where every item has planType='Confirm'
-        const confirmedPlanDocs = allPlanDocs.filter(plan => {
-            const items = plan[dbDept];
-            if (!items || items.length === 0) return false;
-            return items.every(item => item.planType === 'Confirm');
-        });
-
-        // Merge: add any OrderDate-confirmed orders not already in the set
-        confirmedPlanDocs.forEach(p => allOrderNos.add(p.orderNo));
-
-        // Now fetch OrderDate data for ALL confirmed orderNos
-        const finalOrderNos = Array.from(allOrderNos);
+        // Fetch plan data only for this page's orders
         const planDocs = await OrderDate.find(
-            { orderNo: { $in: finalOrderNos } },
+            { orderNo: { $in: orderNos } },
             { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [`${dbDept}Actual`]: 1 }
         ).lean();
 
         // Pad missing OrderDate entries
         const planDocSet = new Set(planDocs.map(p => p.orderNo));
-        finalOrderNos.forEach(orderNo => {
+        orderNos.forEach(orderNo => {
             if (!planDocSet.has(orderNo)) {
                 planDocs.push({ orderNo, [dbDept]: [] });
             }
         });
 
-        const total = planDocs.length;
-
-        // Build orderMap from Order collection for buyer/date info
-        const orderDocs = await Order.find(
-            { orderNo: { $in: finalOrderNos } },
-            { orderNo: 1, buyer: 1, bookingDate: 1 }
-        ).lean();
-
+        // Build orderMap
         const orderMap = {};
-        orderDocs.forEach(o => { orderMap[o.orderNo] = o; });
+        confirmedOrders.forEach(o => { orderMap[o.orderNo] = o; });
+
+        // Get all buyers for filter tabs (from all confirmed orders, not just current page)
+        const buyerFilter = { [statusField]: 'Confirm' };
+        const allBuyers = await Order.distinct('buyer', buyerFilter);
+        const buyers = [...new Set(allBuyers.filter(b => b && b.trim() !== '' && b !== 'N/A').map(b => b.trim().toUpperCase()))].sort();
 
         res.status(200).json({
             planDocs,
             orderMap,
-            total
+            total,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(total / limitNum),
+            buyers
         });
     } catch (error) {
         console.error('Error fetching tracking:', error);
