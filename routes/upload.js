@@ -98,8 +98,6 @@ router.post('/upload', upload.single('document'), async (req, res) => {
 router.get('/all', async (req, res) => {
     try {
         const files = await File.find().sort({ createdAt: -1 }).lean();
-        // Allow browser to cache for 30 seconds (avoids repeated calls during navigation)
-        res.set('Cache-Control', 'private, max-age=30');
         res.status(200).json(files);
     } catch (error) {
         res.status(500).json({ message: 'Server Error' });
@@ -257,36 +255,11 @@ router.post('/save-dates', async (req, res) => {
 // ==========================================
 router.get('/all-dates', async (req, res) => {
     try {
-        // Support optional department filter for faster queries
-        const dept = req.query.dept;
-        let query = OrderDate.find();
-        
-        if (dept) {
-            // Only return orderNo + the requested department data (projection)
-            const projection = { orderNo: 1 };
-            projection[dept] = 1;
-            projection[`${dept}Status`] = 1;
-            projection[`${dept}CompletedDate`] = 1;
-            // Also include other depts for cross-reference (delivery needs knitting/dyeing)
-            ['knitting', 'dyeing', 'finishing', 'delivery', 'yd'].forEach(d => {
-                projection[d] = 1;
-                projection[`${d}Status`] = 1;
-                projection[`${d}CompletedDate`] = 1;
-            });
-            query = OrderDate.find({}, projection);
-        }
-        
-        res.set('Cache-Control', 'private, max-age=15');
-        
-        const docs = await query.lean();
-        res.status(200).json(docs);
+        const dates = await OrderDate.find().lean();
+        res.status(200).json(dates);
     } catch (error) {
         console.error('Error fetching all-dates:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ message: 'Server Error' });
-        } else {
-            res.end();
-        }
+        res.status(500).json({ message: 'Server Error' });
     }
 });
 // Fetch specific dates based on an array of order numbers
