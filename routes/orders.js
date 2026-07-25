@@ -229,10 +229,10 @@ router.get('/tracking/:dept', async (req, res) => {
         const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
         const statusField = `${dbDept}PlanStatus`;
 
-        // First get order numbers that are Confirmed in this department (from Order collection)
+        // Get all orders that are Confirmed in this department
         const confirmedOrders = await Order.find(
             { [statusField]: 'Confirm' },
-            { orderNo: 1 }
+            { orderNo: 1, buyer: 1, bookingDate: 1 }
         ).lean();
 
         const confirmedOrderNos = confirmedOrders.map(o => o.orderNo);
@@ -241,7 +241,7 @@ router.get('/tracking/:dept', async (req, res) => {
             return res.status(200).json({ planDocs: [], orderMap: {}, total: 0 });
         }
 
-        // Now fetch OrderDate plan data only for those confirmed orders
+        // Fetch OrderDate plan data for those orders (some may not have OrderDate docs)
         const planDocs = await OrderDate.find(
             { orderNo: { $in: confirmedOrderNos } },
             {
@@ -252,18 +252,20 @@ router.get('/tracking/:dept', async (req, res) => {
                 [`${dbDept}Actual`]: 1
             }
         ).lean();
+
+        // Create planDocs for orders that don't have OrderDate entries
+        const planDocOrderNos = new Set(planDocs.map(p => p.orderNo));
+        confirmedOrderNos.forEach(orderNo => {
+            if (!planDocOrderNos.has(orderNo)) {
+                planDocs.push({ orderNo, [dbDept]: [] });
+            }
+        });
         
         const total = planDocs.length;
 
-        // Get matching Order docs for buyer/bookingDate info
-        const orderNos = planDocs.map(p => p.orderNo);
-        const orderDocs = await Order.find(
-            { orderNo: { $in: orderNos } },
-            { orderNo: 1, buyer: 1, bookingDate: 1 }
-        ).lean();
-
+        // Build orderMap from already-fetched confirmedOrders (has buyer + bookingDate)
         const orderMap = {};
-        orderDocs.forEach(o => { orderMap[o.orderNo] = o; });
+        confirmedOrders.forEach(o => { orderMap[o.orderNo] = o; });
 
         res.status(200).json({
             planDocs,
