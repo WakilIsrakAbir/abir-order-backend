@@ -227,21 +227,33 @@ router.get('/tracking/:dept', async (req, res) => {
         const { dept } = req.params;
 
         const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
+        const statusField = `${dbDept}PlanStatus`;
 
-        // Find ALL OrderDate docs that have plan data for this dept (no limit)
-        const deptFilter = {};
-        deptFilter[dbDept] = { $exists: true, $ne: [] };
+        // First get order numbers that are Confirmed in this department (from Order collection)
+        const confirmedOrders = await Order.find(
+            { [statusField]: 'Confirm' },
+            { orderNo: 1 }
+        ).lean();
 
-        const [planDocs, total] = await Promise.all([
-            OrderDate.find(deptFilter, {
+        const confirmedOrderNos = confirmedOrders.map(o => o.orderNo);
+
+        if (confirmedOrderNos.length === 0) {
+            return res.status(200).json({ planDocs: [], orderMap: {}, total: 0 });
+        }
+
+        // Now fetch OrderDate plan data only for those confirmed orders
+        const planDocs = await OrderDate.find(
+            { orderNo: { $in: confirmedOrderNos } },
+            {
                 orderNo: 1,
                 [dbDept]: 1,
                 [`${dbDept}Status`]: 1,
                 [`${dbDept}CompletedDate`]: 1,
                 [`${dbDept}Actual`]: 1
-            }).lean(),
-            OrderDate.countDocuments(deptFilter)
-        ]);
+            }
+        ).lean();
+        
+        const total = planDocs.length;
 
         // Get matching Order docs for buyer/bookingDate info
         const orderNos = planDocs.map(p => p.orderNo);
