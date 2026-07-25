@@ -2,8 +2,10 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const mongoose = require('mongoose');
+const XLSX = require('xlsx');
 const File = require('../models/File');
 const OrderDate = require('../models/OrderDate');
+const Order = require('../models/Order');
 
 // ১. Multer Setup - Disk Storage (memory bachanot jonno)
 const fs = require('fs');
@@ -84,6 +86,15 @@ router.post('/upload', upload.single('document'), async (req, res) => {
 
         await newFile.save();
         console.log(`✅ File saved to GridFS: ${savedName}`);
+
+        // ===== APPROACH A: Parse Excel and store in Order collection =====
+        try {
+            await parseAndStoreExcel(req.file.path ? null : null, savedName, category, bucket);
+            console.log(`✅ Excel parsed and stored in Order collection`);
+        } catch (parseErr) {
+            console.error('Excel parse warning (file still uploaded):', parseErr.message);
+        }
+
         return res.status(200).json({ message: 'File Uploaded and History Saved!', file: newFile });
 
     } catch (error) {
@@ -244,6 +255,9 @@ router.post('/save-dates', async (req, res) => {
         );
         
         res.status(200).json({ message: 'Planning Data saved successfully!', data: updatedRecord });
+
+        // Recalc plan statuses in background (don't block response)
+        recalcPlanStatuses().catch(e => console.error('Recalc error:', e.message));
     } catch (error) {
         console.error("Save Dates Error:", error);
         res.status(500).json({ message: 'Server Error while saving data' });
@@ -334,5 +348,297 @@ router.get('/dept-dates/:dept', async (req, res) => {
         res.status(500).json({ message: 'Server Error' });
     }
 });
+
+// ==========================================================
+// EXCEL PARSING: Parse uploaded Excel and store in Order collection
+// ==========================================================
+
+// ==========================================
+// MIGRATION: One-time endpoint to parse all existing files into Order collection
+// Call POST /api/files/migrate-to-orders once after deploying
+// ==========================================
+router.post('/migrate-to-orders', async (req, res) => {
+    try {
+        const bucket = getGridFSBucket();
+        if (!bucket) return res.status(503).json({ message: 'Database not ready' });
+
+        const allFiles = await File.find().sort({ createdAt: 1 }).lean();
+        
+        // Get latest file per originalName+category
+        const latestMap = new Map();
+        allFiles.forEach(f => {
+            const key = `${f.originalName}__${f.category || 'General'}`;
+            latestMap.set(key, f);
+        });
+        const latestFiles = Array.from(latestMap.values());
+
+        let processed = 0;
+        for (const file of latestFiles) {
+            try {
+                await parseAndStoreExcel(null, file.savedName, file.category || 'General', bucket);
+                processed++;
+                console.log(`Migrated: ${file.originalName} (${file.category})`);
+            } catch (e) {
+                console.error(`Failed to migrate ${file.originalName}:`, e.message);
+            }
+        }
+
+        res.status(200).json({ message: `Migration complete. ${processed} files processed.` });
+    } catch (error) {
+        console.error('Migration error:', error);
+        res.status(500).json({ message: 'Migration failed: ' + error.message });
+    }
+});
+
+// Helper: normalize column key for flexible matching
+function normKey(key) {
+    return String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Helper: get value from row by trying multiple possible column names
+function getVal(row, keys, rowKeyMap) {
+    for (const k of keys) {
+        const norm = normKey(k);
+        if (rowKeyMap[norm] !== undefined) {
+            const val = row[rowKeyMap[norm]];
+            return (val === undefined || val === null) ? '' : val;
+        }
+    }
+    return '';
+}
+
+// Helper: build normalized key map for a row
+function buildKeyMap(row) {
+    const map = {};
+    for (const rk in row) {
+        map[normKey(rk)] = rk;
+    }
+    return map;
+}
+
+// Helper: format Excel serial date to ISO string
+function formatExcelDateServer(val) {
+    if (!val || val === 'N/A' || val === '-') return '';
+    if (typeof val === 'number' && val > 25000 && val < 70000) {
+        const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+        return d.toISOString().split('T')[0];
+    }
+    if (typeof val === 'string') {
+        const parsed = new Date(val);
+        if (!isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
+    }
+    return String(val);
+}
+
+// Main function: Parse an uploaded Excel file and update Order collection
+async function parseAndStoreExcel(filePath, savedName, category, bucket) {
+    // Read file from GridFS
+    const chunks = [];
+    const stream = bucket.openDownloadStreamByName(savedName);
+    for await (const chunk of stream) {
+        chunks.push(chunk);
+    }
+    const buf = Buffer.concat(chunks);
+    const wb = XLSX.read(buf, { type: 'buffer' });
+    const sheetData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+
+    if (sheetData.length === 0) return;
+
+    const cat = (category || 'General').toLowerCase();
+
+    if (cat === 'general') {
+        await processGeneralFile(sheetData);
+    } else {
+        const deptMap = { yd: 'yd', knitting: 'knitting', dyeing: 'dyeing', finishing: 'finishing', delivery: 'delivery' };
+        const dept = deptMap[cat] || cat;
+        await processDeptFile(sheetData, dept);
+    }
+
+    // After storing, recalculate plan statuses
+    await recalcPlanStatuses();
+}
+
+// Process General Information file — creates/updates Order docs with general info
+async function processGeneralFile(sheetData) {
+    const bulkOps = [];
+
+    for (const row of sheetData) {
+        const km = buildKeyMap(row);
+        const orderNo = String(getVal(row, ['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No'], km)).trim();
+        if (!orderNo || orderNo === 'undefined') continue;
+
+        const buyer = String(getVal(row, ['Buyer', 'BuyerName', 'Customer'], km)).trim().toUpperCase().replace(/\s+/g, ' ');
+        const bookingDate = formatExcelDateServer(getVal(row, ['BookingReceiveDate', 'BookingDate', 'Date'], km));
+
+        const updateData = {
+            buyer: (buyer && buyer !== 'UNDEFINED' && buyer !== 'N/A') ? buyer : '',
+            bookingDate: bookingDate,
+            requiredQtyKgs: getVal(row, ['RequiredQtyKgs', 'Qty', 'Order Qty'], km),
+            bookingBy: String(getVal(row, ['BookingBy'], km)),
+            pmc: String(getVal(row, ['PMC'], km)),
+            finalConfirmation: String(getVal(row, ['FinalConfirmation', 'Final Confirmation', 'Status'], km)),
+            eventDay: getVal(row, ['EventDay', 'Event day'], km),
+            ship1: formatExcelDateServer(getVal(row, ['1stShipmentDate', '1st Shipment Date', 'Ship1'], km)),
+            shipLast: formatExcelDateServer(getVal(row, ['LastShipmentDate', 'Last Shipment Date', 'ShipLast'], km)),
+            yarnDate: formatExcelDateServer(getVal(row, ['TAYarnDate', 'T&A Yarn date', 'YarnDate'], km)),
+            knitStart: formatExcelDateServer(getVal(row, ['TAKnittingStart', 'T&A Knitting Start', 'KnitStart'], km)),
+            knitEnd: formatExcelDateServer(getVal(row, ['TAKnittingEnd', 'T&A Knitting End', 'KnitEnd'], km)),
+            dyeStart: formatExcelDateServer(getVal(row, ['TADyeingStart', 'T&A Dyeing Start', 'DyeStart'], km)),
+            dyeEnd: formatExcelDateServer(getVal(row, ['TADyeingEnd', 'T&A Dyeing End', 'DyeEnd'], km)),
+            deliStart: formatExcelDateServer(getVal(row, ['TADeliStart', 'T&A Deli. Start', 'DeliStart'], km)),
+            deliEnd: formatExcelDateServer(getVal(row, ['TADeliEnd', 'T&A Deli. End', 'DeliEnd'], km)),
+            fabricNotes: String(getVal(row, ['FabricNotes', 'Fabric Notes', 'Notes'], km)),
+            status: String(getVal(row, ['Status'], km))
+        };
+
+        bulkOps.push({
+            updateOne: {
+                filter: { orderNo },
+                update: { $set: updateData },
+                upsert: true
+            }
+        });
+    }
+
+    if (bulkOps.length > 0) {
+        // Process in batches of 500 to avoid memory issues
+        for (let i = 0; i < bulkOps.length; i += 500) {
+            await Order.bulkWrite(bulkOps.slice(i, i + 500), { ordered: false });
+        }
+        console.log(`  General: ${bulkOps.length} orders upserted`);
+    }
+}
+
+// Process Department file — stores items array for the department
+async function processDeptFile(sheetData, dept) {
+    // Group rows by orderNo
+    const orderItems = {};
+
+    for (const row of sheetData) {
+        const km = buildKeyMap(row);
+        const orderNo = String(getVal(row, ['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No'], km)).trim();
+        if (!orderNo || orderNo === 'undefined') continue;
+
+        // Store clean row data (remove __EMPTY columns)
+        const cleanRow = {};
+        for (const key in row) {
+            if (!key.startsWith('__EMPTY') && key !== '_fileIndex') {
+                cleanRow[key] = row[key];
+            }
+        }
+
+        if (!orderItems[orderNo]) orderItems[orderNo] = [];
+        orderItems[orderNo].push(cleanRow);
+    }
+
+    // Also extract buyer from dept file items
+    const itemsField = `${dept}Items`;
+    const bulkOps = [];
+
+    for (const [orderNo, items] of Object.entries(orderItems)) {
+        const update = { [itemsField]: items };
+
+        // Extract buyer from first item if available
+        if (items.length > 0) {
+            const km = buildKeyMap(items[0]);
+            const buyer = String(getVal(items[0], ['Buyer', 'BuyerName', 'Customer'], km)).trim().toUpperCase().replace(/\s+/g, ' ');
+            if (buyer && buyer !== 'UNDEFINED' && buyer !== 'N/A' && buyer !== '') {
+                update.buyer = buyer;
+            }
+        }
+
+        bulkOps.push({
+            updateOne: {
+                filter: { orderNo },
+                update: { $set: update },
+                upsert: true
+            }
+        });
+    }
+
+    if (bulkOps.length > 0) {
+        for (let i = 0; i < bulkOps.length; i += 500) {
+            await Order.bulkWrite(bulkOps.slice(i, i + 500), { ordered: false });
+        }
+        console.log(`  ${dept}: ${bulkOps.length} orders updated with items`);
+    }
+}
+
+// Recalculate plan statuses based on OrderDate saved plans
+async function recalcPlanStatuses() {
+    try {
+        // Get all OrderDate docs (just the status fields)
+        const plans = await OrderDate.find({}, {
+            orderNo: 1,
+            knitting: 1, knittingStatus: 1,
+            dyeing: 1, dyeingStatus: 1,
+            finishing: 1, finishingStatus: 1,
+            delivery: 1, deliveryStatus: 1,
+            yd: 1, ydStatus: 1
+        }).lean();
+
+        const bulkOps = [];
+        const depts = ['knitting', 'dyeing', 'finishing', 'delivery', 'yd'];
+
+        for (const plan of plans) {
+            const update = {};
+
+            for (const dept of depts) {
+                const items = plan[dept];
+                const savedStatus = plan[`${dept}Status`];
+
+                if (savedStatus === 'Completed') {
+                    update[`${dept}PlanStatus`] = 'Completed';
+                } else if (items && Array.isArray(items) && items.length > 0) {
+                    let hasSelect = false;
+                    let hasTentative = false;
+                    let confirmCount = 0;
+
+                    items.forEach(item => {
+                        if (!item.planType || item.planType === '' || item.planType === 'Select') {
+                            hasSelect = true;
+                        } else if (item.planType === 'Tentative') {
+                            hasTentative = true;
+                        } else if (item.planType === 'Confirm') {
+                            confirmCount++;
+                        }
+                    });
+
+                    if (hasSelect) {
+                        update[`${dept}PlanStatus`] = 'Pending';
+                    } else if (hasTentative) {
+                        update[`${dept}PlanStatus`] = 'Tentative';
+                    } else if (confirmCount === items.length) {
+                        update[`${dept}PlanStatus`] = 'Confirm';
+                    } else {
+                        update[`${dept}PlanStatus`] = 'Pending';
+                    }
+                }
+                // If no plan data exists, status remains 'Pending' (default)
+            }
+
+            if (Object.keys(update).length > 0) {
+                bulkOps.push({
+                    updateOne: {
+                        filter: { orderNo: plan.orderNo },
+                        update: { $set: update }
+                    }
+                });
+            }
+        }
+
+        if (bulkOps.length > 0) {
+            for (let i = 0; i < bulkOps.length; i += 500) {
+                await Order.bulkWrite(bulkOps.slice(i, i + 500), { ordered: false });
+            }
+            console.log(`  Plan statuses recalculated for ${bulkOps.length} orders`);
+        }
+    } catch (e) {
+        console.error('recalcPlanStatuses error:', e.message);
+    }
+}
+
+// Export recalcPlanStatuses so save-dates can call it
+router._recalcPlanStatuses = recalcPlanStatuses;
 
 module.exports = router;

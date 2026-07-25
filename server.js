@@ -31,6 +31,10 @@ try {
     // File Upload Routes (GridFS enabled)
     const uploadRoutes = require('./routes/upload');
     app.use('/api/files', uploadRoutes);
+
+    // Orders API (paginated, fast)
+    const ordersRoutes = require('./routes/orders');
+    app.use('/api/orders', ordersRoutes);
     
     // GridFS File Serving Route
     // Ager express.static('uploads') er bodole ekhon GridFS theke file serve hobe
