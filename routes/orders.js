@@ -225,10 +225,10 @@ router.get('/report/:dept', async (req, res) => {
 router.get('/tracking/:dept', async (req, res) => {
     try {
         const { dept } = req.params;
-        const { page = 1, limit = 10, buyer = '', search = '' } = req.query;
+        const { page = 1, limit = 10, buyer = '', search = '', all = '' } = req.query;
         const pageNum = Math.max(1, parseInt(page));
-        const limitNum = parseInt(limit);
-        const noLimit = limitNum === 0; // limit=0 means fetch ALL (for reports)
+        const limitNum = Math.max(1, parseInt(limit) || 10);
+        const noLimit = all === 'true' || parseInt(limit) === 0; // all=true OR limit=0 means no limit
         const skip = noLimit ? 0 : (pageNum - 1) * limitNum;
 
         const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
