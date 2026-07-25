@@ -8,6 +8,45 @@ const OrderDate = require('../models/OrderDate');
 // ==========================================================
 
 // ==========================================
+// GET /api/orders/all-list — All orders (for Order Status page)
+// No department filter, returns all orders with pagination + search
+// ==========================================
+router.get('/all-list', async (req, res) => {
+    try {
+        const { page = 1, limit = 10, search = '' } = req.query;
+        const pageNum = Math.max(1, parseInt(page));
+        const limitNum = Math.min(200, Math.max(1, parseInt(limit)));
+        const skip = (pageNum - 1) * limitNum;
+
+        const filter = {};
+        if (search) {
+            filter.$or = [
+                { orderNo: { $regex: search, $options: 'i' } },
+                { buyer: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        const projection = { orderNo: 1, buyer: 1, bookingDate: 1, status: 1 };
+
+        const [orders, total] = await Promise.all([
+            Order.find(filter, projection).sort({ orderNo: -1 }).skip(skip).limit(limitNum).lean(),
+            Order.countDocuments(filter)
+        ]);
+
+        res.status(200).json({
+            orders,
+            total,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(total / limitNum)
+        });
+    } catch (error) {
+        console.error('Error fetching all-list:', error);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// ==========================================
 // GET /api/orders — Paginated order list for a department
 // Query params: dept, status, buyer, page, limit, search
 // ==========================================
