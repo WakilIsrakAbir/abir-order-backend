@@ -292,7 +292,7 @@ router.get('/tracking/:dept', async (req, res) => {
 
 // ==========================================
 // GET /api/orders/report-download/:dept — Generate and download Excel report directly
-// No JSON response — streams XLSX file to client
+// Uses projection to minimize data loaded from MongoDB
 // ==========================================
 router.get('/report-download/:dept', async (req, res) => {
     try {
@@ -302,33 +302,36 @@ router.get('/report-download/:dept', async (req, res) => {
         const statusField = `${dept}PlanStatus`;
         const itemsField = `${dept}Items`;
 
+        // Only fetch orderNo (minimal projection) — plan data has itemData already
         const filter = {
-            [statusField]: { $in: ['Confirm', 'Tentative'] },
-            [itemsField]: { $exists: true, $ne: [] }
+            [statusField]: { $in: ['Confirm', 'Tentative'] }
         };
 
-        const orders = await Order.find(filter, { orderNo: 1, [itemsField]: 1, buyer: 1 }).lean();
+        const orders = await Order.find(filter, { orderNo: 1, buyer: 1 }).lean();
         const orderNos = orders.map(o => o.orderNo);
 
-        // Fetch plan data
+        if (orderNos.length === 0) {
+            return res.status(404).json({ message: 'No data to export' });
+        }
+
+        // Fetch plan data only — itemData is stored inside plan items
         const planDocs = await OrderDate.find(
-            { orderNo: { $in: orderNos } },
+            { orderNo: { $in: orderNos }, [dept]: { $exists: true, $ne: [] } },
             { orderNo: 1, [dept]: 1 }
         ).lean();
-        const planMap = {};
-        planDocs.forEach(p => { planMap[p.orderNo] = p; });
+
+        const orderBuyerMap = {};
+        orders.forEach(o => { orderBuyerMap[o.orderNo] = o.buyer; });
 
         // Build rows for Excel
         let allRows = [];
-        orders.forEach(order => {
-            const planData = planMap[order.orderNo];
-            const deptItems = planData && planData[dept] ? planData[dept] : [];
-
-            deptItems.forEach(item => {
+        planDocs.forEach(plan => {
+            const items = plan[dept] || [];
+            items.forEach(item => {
                 if (item.planType === 'Confirm' || item.planType === 'Tentative') {
                     let row = { ...(item.itemData || {}) };
-                    row['OrderNo'] = order.orderNo;
-                    row['Buyer'] = row['Buyer'] || order.buyer || '';
+                    row['OrderNo'] = plan.orderNo;
+                    if (!row['Buyer']) row['Buyer'] = orderBuyerMap[plan.orderNo] || '';
                     row['Plan Start Date'] = item.startDate || '';
                     row['Plan End Date'] = item.endDate || '';
                     row['Plan Type'] = item.planType || '';
