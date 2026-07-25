@@ -428,9 +428,10 @@ router.get('/tracking-download/:dept', async (req, res) => {
                 relatedDept = plan[actualKey].relatedDept || '';
             }
 
-            // Filter by status (Pending = no actualEnd, Complete = has actualEnd)
-            if (status === 'Pending' && actualEnd) return;
-            if (status === 'Complete' && !actualEnd) return;
+            // Filter by status (Pending = no actualEnd, Complete = has actualEnd with real date)
+            const hasActualEnd = actualEnd && actualEnd.trim() !== '' && actualEnd !== '-';
+            if (status === 'Pending' && hasActualEnd) return;
+            if (status === 'Complete' && !hasActualEnd) return;
 
             // Compute pass/fail
             let startResult = '—', endResult = '—';
