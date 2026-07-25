@@ -180,49 +180,72 @@ router.get('/buyers/:dept', async (req, res) => {
 
 // ==========================================
 // GET /api/orders/report/:dept — Report data (Confirm + Tentative orders with full items)
-// Query params: page, limit
+// Returns ALL orders with Confirm or Tentative planning items without limit truncation
 // ==========================================
 router.get('/report/:dept', async (req, res) => {
     try {
         const { dept } = req.params;
-        const { page = 1, limit = 20 } = req.query;
-        const pageNum = Math.max(1, parseInt(page));
-        const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
-        const skip = (pageNum - 1) * limitNum;
+        const limitParam = parseInt(req.query.limit) || 0;
+        
+        // Fetch ALL OrderDate documents that have department planning items saved
+        const allPlanDocs = await OrderDate.find({
+            [dept]: { $exists: true, $ne: [] }
+        }).lean();
 
-        const statusField = `${dept}PlanStatus`;
-        const itemsField = `${dept}Items`;
+        // Filter planDocs: at least one item has planType Confirm or Tentative (or floorPlanType for delivery)
+        const matchingPlanDocs = allPlanDocs.filter(plan => {
+            const items = plan[dept];
+            if (!items || !Array.isArray(items)) return false;
+            return items.some(item => 
+                item.planType === 'Confirm' || 
+                item.planType === 'Tentative' || 
+                (dept === 'delivery' && (item.floorPlanType === 'Confirm' || item.floorPlanType === 'Tentative'))
+            );
+        });
 
-        const filter = {
-            [statusField]: { $in: ['Confirm', 'Tentative'] },
-            [itemsField]: { $exists: true, $ne: [] }
-        };
+        // Apply limit if specified and > 0, otherwise return ALL matching records
+        const finalPlanDocs = (limitParam > 0) ? matchingPlanDocs.slice(0, limitParam) : matchingPlanDocs;
 
-        const [orders, total] = await Promise.all([
-            Order.find(filter)
-                .sort({ orderNo: -1 })
-                .skip(skip)
-                .limit(limitNum)
-                .lean(),
-            Order.countDocuments(filter)
-        ]);
+        // Fetch matching Master Order documents to get official buyer and booking receive date
+        const orderNos = finalPlanDocs.map(p => p.orderNo);
+        const masterOrders = await Order.find({ orderNo: { $in: orderNos } }).lean();
+        const masterOrderMap = {};
+        masterOrders.forEach(o => { masterOrderMap[o.orderNo] = o; });
 
-        // Also get plan data for these orders
-        const orderNos = orders.map(o => o.orderNo);
-        const planDocs = await OrderDate.find(
-            { orderNo: { $in: orderNos } }
-        ).lean();
-
+        // Build orders array and planMap
+        const orders = [];
         const planMap = {};
-        planDocs.forEach(p => { planMap[p.orderNo] = p; });
+
+        finalPlanDocs.forEach(plan => {
+            planMap[plan.orderNo] = plan;
+            
+            const masterInfo = masterOrderMap[plan.orderNo] || {};
+            let buyer = masterInfo.buyer || 'N/A';
+            let bookingDate = masterInfo.bookingDate || null;
+
+            // Fallback to itemData if master info is not set
+            if (buyer === 'N/A' || !buyer) {
+                const deptItems = plan[dept] || [];
+                for (let item of deptItems) {
+                    if (item.itemData && (item.itemData.Buyer || item.itemData.BuyerName || item.itemData.Customer)) {
+                        buyer = item.itemData.Buyer || item.itemData.BuyerName || item.itemData.Customer;
+                        break;
+                    }
+                }
+            }
+
+            orders.push({
+                orderNo: plan.orderNo,
+                buyer: buyer,
+                bookingDate: bookingDate,
+                status: plan[`${dept}Status`] || 'On Process'
+            });
+        });
 
         res.status(200).json({
             orders,
             planMap,
-            total,
-            page: pageNum,
-            limit: limitNum,
-            totalPages: Math.ceil(total / limitNum)
+            total: matchingPlanDocs.length
         });
     } catch (error) {
         console.error('Error fetching report:', error);
