@@ -185,10 +185,6 @@ router.get('/buyers/:dept', async (req, res) => {
 router.get('/report/:dept', async (req, res) => {
     try {
         const { dept } = req.params;
-        const { page = 1, limit = 2000 } = req.query;
-        const pageNum = Math.max(1, parseInt(page));
-        const limitNum = Math.min(5000, Math.max(1, parseInt(limit)));
-        const skip = (pageNum - 1) * limitNum;
 
         const statusField = `${dept}PlanStatus`;
         const itemsField = `${dept}Items`;
@@ -198,14 +194,9 @@ router.get('/report/:dept', async (req, res) => {
             [itemsField]: { $exists: true, $ne: [] }
         };
 
-        const [orders, total] = await Promise.all([
-            Order.find(filter)
-                .sort({ orderNo: -1 })
-                .skip(skip)
-                .limit(limitNum)
-                .lean(),
-            Order.countDocuments(filter)
-        ]);
+        // No limit — fetch ALL confirmed/tentative orders for report
+        const orders = await Order.find(filter).sort({ orderNo: -1 }).lean();
+        const total = orders.length;
 
         // Also get plan data for these orders
         const orderNos = orders.map(o => o.orderNo);
@@ -219,10 +210,7 @@ router.get('/report/:dept', async (req, res) => {
         res.status(200).json({
             orders,
             planMap,
-            total,
-            page: pageNum,
-            limit: limitNum,
-            totalPages: Math.ceil(total / limitNum)
+            total
         });
     } catch (error) {
         console.error('Error fetching report:', error);
