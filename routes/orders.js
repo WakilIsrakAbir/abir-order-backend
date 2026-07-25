@@ -364,4 +364,153 @@ router.get('/report-download/:dept', async (req, res) => {
     }
 });
 
+// ==========================================
+// GET /api/orders/tracking-download/:dept — Download tracking report as Excel
+// Generates Excel with ALL confirmed orders for the department
+// ==========================================
+router.get('/tracking-download/:dept', async (req, res) => {
+    try {
+        const XLSX = require('xlsx');
+        const { dept } = req.params;
+        const { status = 'Pending' } = req.query; // 'Pending' or 'Complete'
+
+        const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
+        const statusField = `${dbDept}PlanStatus`;
+
+        // Get all confirmed orders
+        const confirmedOrders = await Order.find(
+            { [statusField]: 'Confirm' },
+            { orderNo: 1, buyer: 1, bookingDate: 1 }
+        ).lean();
+
+        const orderNos = confirmedOrders.map(o => o.orderNo);
+        const orderMap = {};
+        confirmedOrders.forEach(o => { orderMap[o.orderNo] = o; });
+
+        // Get plan data
+        const planDocs = await OrderDate.find(
+            { orderNo: { $in: orderNos } },
+            { orderNo: 1, [dbDept]: 1, [`${dbDept}Actual`]: 1 }
+        ).lean();
+
+        // Build tracking rows
+        let rows = [];
+        
+        // Process OrderDate docs
+        const processedOrderNos = new Set();
+        planDocs.forEach(plan => {
+            processedOrderNos.add(plan.orderNo);
+            const deptItems = plan[dbDept] || [];
+            const orderInfo = orderMap[plan.orderNo] || {};
+
+            let planStart = '', planEnd = '';
+            if (deptItems.length > 0) {
+                if (dept === 'deliveryfloor') {
+                    const floorItems = deptItems.filter(i => i.floorPlanType === 'Confirm' || i.floorPlanType === 'Tentative');
+                    const starts = floorItems.map(i => i.floorStartDate).filter(d => d && d !== '');
+                    const ends = floorItems.map(i => i.floorEndDate).filter(d => d && d !== '');
+                    if (starts.length) { starts.sort(); planStart = starts[0]; }
+                    if (ends.length) { ends.sort(); planEnd = ends[ends.length - 1]; }
+                } else {
+                    const starts = deptItems.map(i => i.startDate).filter(d => d && d !== '');
+                    const ends = deptItems.map(i => i.endDate).filter(d => d && d !== '');
+                    if (starts.length) { starts.sort(); planStart = starts[0]; }
+                    if (ends.length) { ends.sort(); planEnd = ends[ends.length - 1]; }
+                }
+            }
+
+            const actualKey = dept + 'Actual';
+            let actualStart = '', actualEnd = '', failReason = '', relatedDept = '';
+            if (plan[actualKey]) {
+                actualStart = plan[actualKey].actualStart || '';
+                actualEnd = plan[actualKey].actualEnd || '';
+                failReason = plan[actualKey].failReason || '';
+                relatedDept = plan[actualKey].relatedDept || '';
+            }
+
+            // Filter by status (Pending = no actualEnd, Complete = has actualEnd)
+            if (status === 'Pending' && actualEnd) return;
+            if (status === 'Complete' && !actualEnd) return;
+
+            // Compute pass/fail
+            let startResult = '—', endResult = '—';
+            if (actualStart && planStart) {
+                startResult = new Date(actualStart) <= new Date(planStart) ? 'Pass' : 'Fail';
+            }
+            if (actualEnd && planEnd) {
+                endResult = new Date(actualEnd) <= new Date(planEnd) ? 'Pass' : 'Fail';
+            }
+
+            rows.push({
+                'Order/Booking No.': plan.orderNo,
+                'Buyer': orderInfo.buyer || '',
+                'Plan Start': planStart,
+                'Plan End': planEnd,
+                'Actual Start': actualStart,
+                'Actual End': actualEnd,
+                'Start Result': startResult,
+                'End Result': endResult,
+                'Fail Reason': failReason,
+                'Related Dept.': relatedDept
+            });
+        });
+
+        // Add orders without OrderDate docs
+        orderNos.forEach(orderNo => {
+            if (!processedOrderNos.has(orderNo)) {
+                const orderInfo = orderMap[orderNo] || {};
+                if (status === 'Complete') return; // No actual data = pending
+                rows.push({
+                    'Order/Booking No.': orderNo,
+                    'Buyer': orderInfo.buyer || '',
+                    'Plan Start': '',
+                    'Plan End': '',
+                    'Actual Start': '',
+                    'Actual End': '',
+                    'Start Result': '—',
+                    'End Result': '—',
+                    'Fail Reason': '',
+                    'Related Dept.': ''
+                });
+            }
+        });
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'No data to export' });
+        }
+
+        // Add SL column
+        rows.forEach((r, i) => { r['SL'] = i + 1; });
+        // Reorder columns
+        const orderedRows = rows.map(r => ({
+            'SL': r['SL'],
+            'Order/Booking No.': r['Order/Booking No.'],
+            'Buyer': r['Buyer'],
+            'Plan Start': r['Plan Start'],
+            'Plan End': r['Plan End'],
+            'Actual Start': r['Actual Start'],
+            'Actual End': r['Actual End'],
+            'Start Result': r['Start Result'],
+            'End Result': r['End Result'],
+            'Fail Reason': r['Fail Reason'],
+            'Related Dept.': r['Related Dept.']
+        }));
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(orderedRows);
+        XLSX.utils.book_append_sheet(wb, ws, 'Report');
+
+        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+        const deptName = dept.charAt(0).toUpperCase() + dept.slice(1);
+        const dateStr = new Date().toISOString().split('T')[0];
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${deptName}_${status}_Tracking_Report_${dateStr}.xlsx"`);
+        res.send(buf);
+
+    } catch (error) {
+        console.error('Tracking download error:', error);
+        res.status(500).json({ message: 'Error generating report' });
+    }
+});
+
 module.exports = router;
