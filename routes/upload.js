@@ -251,15 +251,31 @@ router.post('/save-dates', async (req, res) => {
 });
 
 // ==========================================
-// API 5: Get All Process Dates
+// API 5: Get All Process Dates (streamed to avoid memory overflow)
 // ==========================================
 router.get('/all-dates', async (req, res) => {
     try {
-        const dates = await OrderDate.find().lean();
-        res.status(200).json(dates);
+        res.setHeader('Content-Type', 'application/json');
+        res.write('[');
+        
+        const cursor = OrderDate.find().lean().cursor();
+        let first = true;
+        
+        for await (const doc of cursor) {
+            if (!first) res.write(',');
+            res.write(JSON.stringify(doc));
+            first = false;
+        }
+        
+        res.write(']');
+        res.end();
     } catch (error) {
         console.error('Error fetching all-dates:', error);
-        res.status(500).json({ message: 'Server Error' });
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Server Error' });
+        } else {
+            res.end();
+        }
     }
 });
 // Fetch specific dates based on an array of order numbers
