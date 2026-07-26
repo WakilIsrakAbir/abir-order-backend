@@ -403,7 +403,7 @@ function normalizeItemRow(rawItem, dept) {
         return '';
     };
 
-    if (dept === 'knitting' || dept === 'delivery') {
+    if (dept === 'delivery') {
         return {
             OrderNo: getField(['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No']),
             Buyer: getField(['Buyer', 'BuyerName', 'Customer']),
@@ -427,6 +427,22 @@ function normalizeItemRow(rawItem, dept) {
             BPQty: getField(['BP Qty', 'BPQty']),
             DyeingProd: getField(['Dyeing Prod.', 'DyeingProd', 'Dyeing Prod']),
             DyeingBala: getField(['Dyeing Bala.', 'DyeingBala', 'Dyeing Bala']),
+        };
+    } else if (dept === 'knitting') {
+        return {
+            OrderNo: getField(['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No']),
+            Buyer: getField(['Buyer', 'BuyerName', 'Customer']),
+            Color: getField(['Color', 'Colour', 'Fab Color']),
+            FabricConstruction: getField(['FabricConstruction', 'Construction', 'Fab Const', 'Fabric']),
+            GSM: getField(['GSM', 'G.S.M']),
+            RequiredQtyKgs: getField(['RequiredQtyKgs', 'Req Qty', 'Qty']),
+            Allowance: getField(['Allowance %', 'Allowance']),
+            YarnReq: getField(['Yarn req.', 'YarnReq', 'Yarn Req']),
+            AllocatedQty: getField(['Allocated Qty', 'AllocatedQty']),
+            YarnBala: getField(['Yarn bala.', 'YarnBala', 'Yarn Bala']),
+            GreyReq: getField(['Grey Req.', 'GreyReq', 'Grey Req']),
+            KnitProd: getField(['Knit Prod.', 'KnitProd', 'Knit Prod']),
+            KnitBala: getField(['Knit. Bala.', 'KnitBala', 'Knit Bala.', 'Knit Bala']),
         };
     } else if (dept === 'dyeing' || dept === 'finishing') {
         return {
