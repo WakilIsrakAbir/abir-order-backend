@@ -471,6 +471,10 @@ function normalizeItemRow(rawItem, dept) {
 // GET /api/orders/report-download/:dept — Generate and download Excel report directly
 // Uses projection to minimize data loaded from MongoDB
 // ==========================================
+// ==========================================
+// GET /api/orders/report-download/:dept — Generate and download Excel report directly
+// Uses projection and chunking to minimize memory load
+// ==========================================
 router.get('/report-download/:dept', async (req, res) => {
     try {
         const XLSX = require('xlsx');
@@ -489,6 +493,7 @@ router.get('/report-download/:dept', async (req, res) => {
             [statusField]: { $in: statusList }
         };
 
+        // 1. Get minimal order info
         const orders = await Order.find(filter, { orderNo: 1, buyer: 1 }).lean();
         const orderNos = orders.map(o => o.orderNo);
 
@@ -496,100 +501,112 @@ router.get('/report-download/:dept', async (req, res) => {
             return res.status(404).json({ message: 'No data to export' });
         }
 
-        // Fetch plan data — for delivery, also fetch knitting and dyeing plans
+        const orderBuyerMap = {};
+        orders.forEach(o => { orderBuyerMap[o.orderNo] = o.buyer; });
+
         let planProjection = { orderNo: 1, [dept]: 1 };
         if (dept === 'delivery') {
             planProjection.knitting = 1;
             planProjection.dyeing = 1;
         }
 
-        const planDocs = await OrderDate.find(
-            { orderNo: { $in: orderNos }, [dept]: { $exists: true, $ne: [] } },
-            planProjection
-        ).lean();
-
-        const orderBuyerMap = {};
-        orders.forEach(o => { orderBuyerMap[o.orderNo] = o.buyer; });
-
-        // Build rows for Excel — normalize all items with consistent column keys
         let allRows = [];
-        planDocs.forEach(plan => {
-            const items = plan[dept] || [];
-            items.forEach(item => {
-                // Normalize item data to consistent column keys
-                let row = normalizeItemRow(item.itemData || {}, dept);
-                row['OrderNo'] = plan.orderNo;
-                if (!row['Buyer']) row['Buyer'] = orderBuyerMap[plan.orderNo] || '';
+        const planDocOrderNos = new Set();
+        const chunkSize = 500; // Process 500 orders at a time to save memory
 
-                if (dept === 'delivery') {
-                    // Include knitting plan dates (matched by Color + FabricConstruction + GSM)
-                    let knitStart = '', knitEnd = '', knitType = '';
-                    let dyeStart = '', dyeEnd = '', dyeType = '';
+        // 2. Fetch Plan Data in Chunks
+        for (let i = 0; i < orderNos.length; i += chunkSize) {
+            const chunkOrderNos = orderNos.slice(i, i + chunkSize);
+            
+            const planDocsChunk = await OrderDate.find(
+                { orderNo: { $in: chunkOrderNos }, [dept]: { $exists: true, $ne: [] } },
+                planProjection
+            ).lean();
 
-                    const myColor = String(row.Color || '').trim().toLowerCase();
-                    const myConst = String(row.FabricConstruction || '').trim().toLowerCase();
-                    const myGSM = String(row.GSM || '').trim().toLowerCase();
+            planDocsChunk.forEach(plan => {
+                planDocOrderNos.add(plan.orderNo);
+                const items = plan[dept] || [];
+                
+                items.forEach(item => {
+                    let row = normalizeItemRow(item.itemData || {}, dept);
+                    row['OrderNo'] = plan.orderNo;
+                    if (!row['Buyer']) row['Buyer'] = orderBuyerMap[plan.orderNo] || '';
 
-                    if (plan.knitting && Array.isArray(plan.knitting)) {
-                        const kItem = plan.knitting.find(k => k.itemData &&
-                            String(k.itemData.Color || '').trim().toLowerCase() === myColor &&
-                            String(k.itemData.FabricConstruction || '').trim().toLowerCase() === myConst &&
-                            String(k.itemData.GSM || '').trim().toLowerCase() === myGSM);
-                        if (kItem) {
-                            knitStart = kItem.startDate || '';
-                            knitEnd = kItem.endDate || '';
-                            knitType = kItem.planType || '';
+                    if (dept === 'delivery') {
+                        let knitStart = '', knitEnd = '', knitType = '';
+                        let dyeStart = '', dyeEnd = '', dyeType = '';
+
+                        const myColor = String(row.Color || '').trim().toLowerCase();
+                        const myConst = String(row.FabricConstruction || '').trim().toLowerCase();
+                        const myGSM = String(row.GSM || '').trim().toLowerCase();
+
+                        if (plan.knitting && Array.isArray(plan.knitting)) {
+                            const kItem = plan.knitting.find(k => k.itemData &&
+                                String(k.itemData.Color || '').trim().toLowerCase() === myColor &&
+                                String(k.itemData.FabricConstruction || '').trim().toLowerCase() === myConst &&
+                                String(k.itemData.GSM || '').trim().toLowerCase() === myGSM);
+                            if (kItem) {
+                                knitStart = kItem.startDate || '';
+                                knitEnd = kItem.endDate || '';
+                                knitType = kItem.planType || '';
+                            }
                         }
+
+                        if (plan.dyeing && Array.isArray(plan.dyeing)) {
+                            const dItem = plan.dyeing.find(d => d.itemData &&
+                                String(d.itemData.Color || '').trim().toLowerCase() === myColor);
+                            if (dItem) {
+                                dyeStart = dItem.startDate || '';
+                                dyeEnd = dItem.endDate || '';
+                                dyeType = dItem.planType || '';
+                            }
+                        }
+
+                        row['Knit Start Date'] = knitStart;
+                        row['Knit End Date'] = knitEnd;
+                        row['Knit Plan Type'] = knitType;
+                        row['Dyeing Start Date'] = dyeStart;
+                        row['Dyeing End Date'] = dyeEnd;
+                        row['Dyeing Plan Type'] = dyeType;
+                        row['Delivery Plan Start'] = item.startDate || '';
+                        row['Delivery Plan End'] = item.endDate || '';
+                        row['Delivery Plan Type'] = item.planType || '';
+                        row['Delivery Plan Start (Floor)'] = item.floorStartDate || '';
+                        row['Delivery Plan End (Floor)'] = item.floorEndDate || '';
+                        row['Delivery Plan Type (Floor)'] = item.floorPlanType || '';
+                        row['Limitation'] = item.limitation || '';
+                        row['Remarks'] = item.remarks || '';
+                    } else {
+                        row['Plan Start Date'] = item.startDate || '';
+                        row['Plan End Date'] = item.endDate || '';
+                        row['Plan Type'] = item.planType || '';
+                        row['Limitation'] = item.limitation || '';
+                        row['Remarks'] = item.remarks || '';
                     }
 
-                    if (plan.dyeing && Array.isArray(plan.dyeing)) {
-                        const dItem = plan.dyeing.find(d => d.itemData &&
-                            String(d.itemData.Color || '').trim().toLowerCase() === myColor);
-                        if (dItem) {
-                            dyeStart = dItem.startDate || '';
-                            dyeEnd = dItem.endDate || '';
-                            dyeType = dItem.planType || '';
-                        }
-                    }
-
-                    row['Knit Start Date'] = knitStart;
-                    row['Knit End Date'] = knitEnd;
-                    row['Knit Plan Type'] = knitType;
-                    row['Dyeing Start Date'] = dyeStart;
-                    row['Dyeing End Date'] = dyeEnd;
-                    row['Dyeing Plan Type'] = dyeType;
-                    row['Delivery Plan Start'] = item.startDate || '';
-                    row['Delivery Plan End'] = item.endDate || '';
-                    row['Delivery Plan Type'] = item.planType || '';
-                    row['Delivery Plan Start (Floor)'] = item.floorStartDate || '';
-                    row['Delivery Plan End (Floor)'] = item.floorEndDate || '';
-                    row['Delivery Plan Type (Floor)'] = item.floorPlanType || '';
-                    row['Limitation'] = item.limitation || '';
-                    row['Remarks'] = item.remarks || '';
-                } else {
-                    row['Plan Start Date'] = item.startDate || '';
-                    row['Plan End Date'] = item.endDate || '';
-                    row['Plan Type'] = item.planType || '';
-                    row['Limitation'] = item.limitation || '';
-                    row['Remarks'] = item.remarks || '';
-                }
-
-                allRows.push(row);
+                    allRows.push(row);
+                });
             });
-        });
+        }
 
-        // Also include orders with items but no plan saved yet (pure Pending — only for Delivery)
+        // 3. Include pure Pending items (only for Delivery) in Chunks
         if (dept === 'delivery') {
-            const planDocOrderNos = new Set(planDocs.map(p => p.orderNo));
-            for (const order of orders) {
-                if (!planDocOrderNos.has(order.orderNo)) {
-                    const items = await Order.findOne({ orderNo: order.orderNo }, { [`${dept}Items`]: 1 }).lean();
-                    if (items && items[`${dept}Items`]) {
-                        items[`${dept}Items`].forEach(itemData => {
-                            // Normalize raw Excel item data to consistent column keys
+            const pendingOrderNos = orderNos.filter(no => !planDocOrderNos.has(no));
+            
+            for (let i = 0; i < pendingOrderNos.length; i += chunkSize) {
+                const chunkNos = pendingOrderNos.slice(i, i + chunkSize);
+                
+                const pendingItemsDocs = await Order.find(
+                    { orderNo: { $in: chunkNos } }, 
+                    { orderNo: 1, buyer: 1, [`${dept}Items`]: 1 }
+                ).lean();
+
+                pendingItemsDocs.forEach(orderDoc => {
+                    if (orderDoc[`${dept}Items`]) {
+                        orderDoc[`${dept}Items`].forEach(itemData => {
                             let row = normalizeItemRow(itemData, dept);
-                            row['OrderNo'] = order.orderNo;
-                            if (!row['Buyer']) row['Buyer'] = order.buyer || '';
+                            row['OrderNo'] = orderDoc.orderNo;
+                            if (!row['Buyer']) row['Buyer'] = orderDoc.buyer || orderBuyerMap[orderDoc.orderNo] || '';
                             row['Knit Start Date'] = '';
                             row['Knit End Date'] = '';
                             row['Knit Plan Type'] = '';
@@ -607,7 +624,7 @@ router.get('/report-download/:dept', async (req, res) => {
                             allRows.push(row);
                         });
                     }
-                }
+                });
             }
         }
 
@@ -615,20 +632,26 @@ router.get('/report-download/:dept', async (req, res) => {
             return res.status(404).json({ message: 'No data to export' });
         }
 
-        // Generate Excel with proper date and number formatting
+        // 4. Generate Excel
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.json_to_sheet(allRows);
 
-        // Post-process cells: convert dates and OrderNo to proper formats
+        // 5. Post-process cells: convert dates and OrderNo to proper formats
         if (ws['!ref']) {
             const range = XLSX.utils.decode_range(ws['!ref']);
             const headers = [];
             let orderNoCol = -1;
+            const dateCols = [];
+
+            // Pre-calculate header indexes for speed
             for (let C = range.s.c; C <= range.e.c; ++C) {
                 const cell = ws[XLSX.utils.encode_cell({ r: 0, c: C })];
-                const hdr = cell ? String(cell.v) : '';
-                headers[C] = hdr.toLowerCase();
-                if (hdr === 'OrderNo') orderNoCol = C;
+                const hdr = cell ? String(cell.v).toLowerCase() : '';
+                headers[C] = hdr;
+                if (hdr === 'orderno') orderNoCol = C;
+                if (hdr.includes('date') || hdr.includes('start') || hdr.includes('end')) {
+                    dateCols.push(C);
+                }
             }
 
             for (let R = 1; R <= range.e.r; ++R) {
@@ -642,12 +665,8 @@ router.get('/report-download/:dept', async (req, res) => {
                     }
                 }
 
-                // Convert date columns to Excel date numbers
-                for (let C = range.s.c; C <= range.e.c; ++C) {
-                    const h = headers[C];
-                    const isDateCol = h.includes('date') || h.includes('start') || h.includes('end');
-                    if (!isDateCol) continue;
-
+                // Convert date columns to Excel date numbers (optimized loop)
+                for (const C of dateCols) {
                     const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
                     const cell = ws[cellRef];
                     if (!cell || !cell.v || cell.v === '' || cell.v === 'N/A' || cell.v === '-') continue;
