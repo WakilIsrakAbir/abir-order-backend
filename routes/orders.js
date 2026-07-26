@@ -314,10 +314,16 @@ router.get('/report-download/:dept', async (req, res) => {
             return res.status(404).json({ message: 'No data to export' });
         }
 
-        // Fetch plan data only — itemData is stored inside plan items
+        // Fetch plan data — for delivery, also fetch knitting and dyeing plans
+        let planProjection = { orderNo: 1, [dept]: 1 };
+        if (dept === 'delivery') {
+            planProjection.knitting = 1;
+            planProjection.dyeing = 1;
+        }
+
         const planDocs = await OrderDate.find(
             { orderNo: { $in: orderNos }, [dept]: { $exists: true, $ne: [] } },
-            { orderNo: 1, [dept]: 1 }
+            planProjection
         ).lean();
 
         const orderBuyerMap = {};
@@ -332,11 +338,60 @@ router.get('/report-download/:dept', async (req, res) => {
                     let row = { ...(item.itemData || {}) };
                     row['OrderNo'] = plan.orderNo;
                     if (!row['Buyer']) row['Buyer'] = orderBuyerMap[plan.orderNo] || '';
-                    row['Plan Start Date'] = item.startDate || '';
-                    row['Plan End Date'] = item.endDate || '';
-                    row['Plan Type'] = item.planType || '';
-                    row['Limitation'] = item.limitation || '';
-                    row['Remarks'] = item.remarks || '';
+
+                    if (dept === 'delivery') {
+                        // Include knitting plan dates (matched by Color + FabricConstruction + GSM)
+                        let knitStart = '', knitEnd = '', knitType = '';
+                        let dyeStart = '', dyeEnd = '', dyeType = '';
+
+                        const myColor = String(row.Color || '').trim().toLowerCase();
+                        const myConst = String(row.FabricConstruction || '').trim().toLowerCase();
+                        const myGSM = String(row.GSM || '').trim().toLowerCase();
+
+                        if (plan.knitting && Array.isArray(plan.knitting)) {
+                            const kItem = plan.knitting.find(k => k.itemData &&
+                                String(k.itemData.Color || '').trim().toLowerCase() === myColor &&
+                                String(k.itemData.FabricConstruction || '').trim().toLowerCase() === myConst &&
+                                String(k.itemData.GSM || '').trim().toLowerCase() === myGSM);
+                            if (kItem) {
+                                knitStart = kItem.startDate || '';
+                                knitEnd = kItem.endDate || '';
+                                knitType = kItem.planType || '';
+                            }
+                        }
+
+                        if (plan.dyeing && Array.isArray(plan.dyeing)) {
+                            const dItem = plan.dyeing.find(d => d.itemData &&
+                                String(d.itemData.Color || '').trim().toLowerCase() === myColor);
+                            if (dItem) {
+                                dyeStart = dItem.startDate || '';
+                                dyeEnd = dItem.endDate || '';
+                                dyeType = dItem.planType || '';
+                            }
+                        }
+
+                        row['Knit Start Date'] = knitStart;
+                        row['Knit End Date'] = knitEnd;
+                        row['Knit Plan Type'] = knitType;
+                        row['Dyeing Start Date'] = dyeStart;
+                        row['Dyeing End Date'] = dyeEnd;
+                        row['Dyeing Plan Type'] = dyeType;
+                        row['Delivery Plan Start'] = item.startDate || '';
+                        row['Delivery Plan End'] = item.endDate || '';
+                        row['Delivery Plan Type'] = item.planType || '';
+                        row['Delivery Plan Start (Floor)'] = item.floorStartDate || '';
+                        row['Delivery Plan End (Floor)'] = item.floorEndDate || '';
+                        row['Delivery Plan Type (Floor)'] = item.floorPlanType || '';
+                        row['Limitation'] = item.limitation || '';
+                        row['Remarks'] = item.remarks || '';
+                    } else {
+                        row['Plan Start Date'] = item.startDate || '';
+                        row['Plan End Date'] = item.endDate || '';
+                        row['Plan Type'] = item.planType || '';
+                        row['Limitation'] = item.limitation || '';
+                        row['Remarks'] = item.remarks || '';
+                    }
+
                     allRows.push(row);
                 }
             });
