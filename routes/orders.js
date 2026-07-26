@@ -235,7 +235,7 @@ router.get('/tracking/:dept', async (req, res) => {
         const statusField = `${dbDept}PlanStatus`;
         const actualField = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
 
-        // 1. Get Confirmed + Completed orders from Order collection
+        // 1. Get Confirmed + Completed orders from Order collection (LIGHTWEIGHT)
         const orderFilter = { [statusField]: { $in: ['Confirm', 'Completed'] } };
         if (buyer) orderFilter.buyer = { $regex: buyer, $options: 'i' };
         if (search) orderFilter.orderNo = { $regex: search, $options: 'i' };
@@ -245,7 +245,7 @@ router.get('/tracking/:dept', async (req, res) => {
 
         const orderNos = confirmedOrders.map(o => o.orderNo);
 
-        // 2. Find orphaned tracking data — OrderDate docs with actual data
+        // 2. Find orphaned tracking data — OrderDate docs with actual data (LIGHTWEIGHT)
         //    for orders NOT in the confirmed/completed list
         const orphanMatch = [{ orderNo: { $nin: orderNos } }];
         if (search) orphanMatch.push({ orderNo: { $regex: search, $options: 'i' } });
@@ -262,7 +262,7 @@ router.get('/tracking/:dept', async (req, res) => {
 
         const orphanedDocs = await OrderDate.find(
             orphanFilter,
-            { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [actualField]: 1 }
+            { orderNo: 1, [actualField]: 1 } // ONLY fetch actual tracking info
         ).lean();
 
         // Get Order info for orphaned orders (buyer/bookingDate)
@@ -288,33 +288,33 @@ router.get('/tracking/:dept', async (req, res) => {
             return res.status(200).json({ planDocs: [], orderMap: {}, total: 0, page: 1, limit: limitNum, totalPages: 0, buyers: [] });
         }
 
-        // 4. Fetch plan data for confirmed/completed orders
-        const planDocs = orderNos.length > 0 ? await OrderDate.find(
+        // 4. Fetch lightweight plan tracking info for confirmed/completed orders (NO ARRAYS)
+        const planTrackingInfo = orderNos.length > 0 ? await OrderDate.find(
             { orderNo: { $in: orderNos } },
-            { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [actualField]: 1 }
+            { orderNo: 1, [actualField]: 1 } // ONLY fetch actual tracking info
         ).lean() : [];
 
         // Pad missing OrderDate entries for confirmed/completed orders
-        const planDocSet = new Set(planDocs.map(p => p.orderNo));
+        const planDocSet = new Set(planTrackingInfo.map(p => p.orderNo));
         orderNos.forEach(orderNo => {
             if (!planDocSet.has(orderNo)) {
-                planDocs.push({ orderNo, [dbDept]: [] });
+                planTrackingInfo.push({ orderNo });
                 planDocSet.add(orderNo);
             }
         });
 
-        // Add orphaned docs to planDocs (avoid duplicates)
+        // Add orphaned docs to planTrackingInfo (avoid duplicates)
         filteredOrphanedDocs.forEach(doc => {
             if (!planDocSet.has(doc.orderNo)) {
-                planDocs.push(doc);
+                planTrackingInfo.push(doc);
                 planDocSet.add(doc.orderNo);
             }
         });
 
         // 5. Filter by Pending/Complete status (based on actualEnd)
-        let filteredPlanDocs = planDocs;
+        let filteredPlanInfo = planTrackingInfo;
         if (status === 'Pending' || status === 'Complete') {
-            filteredPlanDocs = planDocs.filter(plan => {
+            filteredPlanInfo = planTrackingInfo.filter(plan => {
                 const actual = plan[actualField];
                 const hasActualEnd = actual && actual.actualEnd && actual.actualEnd.trim() !== '';
                 if (status === 'Pending') return !hasActualEnd;
@@ -335,16 +335,41 @@ router.get('/tracking/:dept', async (req, res) => {
         orphanedOrderInfos.forEach(o => { if (o.buyer) allBuyersList.push(o.buyer); });
         const buyers = [...new Set(allBuyersList.filter(b => b && b.trim() !== '' && b !== 'N/A').map(b => b.trim().toUpperCase()))].sort();
 
-        // 8. Paginate the filtered results
-        const totalFiltered = filteredPlanDocs.length;
-        const paginatedDocs = noLimit ? filteredPlanDocs : filteredPlanDocs.slice(skip, skip + limitNum);
+        // 8. Paginate the filtered lightweight results
+        const totalFiltered = filteredPlanInfo.length;
+        const paginatedInfo = noLimit ? filteredPlanInfo : filteredPlanInfo.slice(skip, skip + limitNum);
+
+        // 9. Fetch HEAVY plan data (arrays) ONLY for the paginated orderNos
+        const paginatedOrderNos = paginatedInfo.map(p => p.orderNo);
+        let paginatedDocs = [];
+        if (paginatedOrderNos.length > 0) {
+            paginatedDocs = await OrderDate.find(
+                { orderNo: { $in: paginatedOrderNos } },
+                { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [actualField]: 1 }
+            ).lean();
+        }
+
+        // Pad missing heavy docs if they don't exist in DB yet (for confirmed orders)
+        const heavyDocSet = new Set(paginatedDocs.map(p => p.orderNo));
+        paginatedOrderNos.forEach(orderNo => {
+            if (!heavyDocSet.has(orderNo)) {
+                paginatedDocs.push({ orderNo, [dbDept]: [] });
+            }
+        });
+
+        // Ensure the paginatedDocs are in the same sorted order as paginatedInfo
+        const finalPaginatedDocs = [];
+        paginatedOrderNos.forEach(orderNo => {
+            const doc = paginatedDocs.find(d => d.orderNo === orderNo);
+            if (doc) finalPaginatedDocs.push(doc);
+        });
 
         // Only keep orderMap entries for paginated docs (save memory)
         const paginatedOrderMap = {};
-        paginatedDocs.forEach(p => { if (orderMap[p.orderNo]) paginatedOrderMap[p.orderNo] = orderMap[p.orderNo]; });
+        finalPaginatedDocs.forEach(p => { if (orderMap[p.orderNo]) paginatedOrderMap[p.orderNo] = orderMap[p.orderNo]; });
 
         res.status(200).json({
-            planDocs: paginatedDocs,
+            planDocs: finalPaginatedDocs,
             orderMap: paginatedOrderMap,
             total: totalFiltered,
             page: noLimit ? 1 : pageNum,
