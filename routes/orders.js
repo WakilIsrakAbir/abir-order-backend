@@ -225,7 +225,7 @@ router.get('/report/:dept', async (req, res) => {
 router.get('/tracking/:dept', async (req, res) => {
     try {
         const { dept } = req.params;
-        const { page = 1, limit = 10, buyer = '', search = '', all = '' } = req.query;
+        const { page = 1, limit = 10, buyer = '', search = '', all = '', status = '' } = req.query;
         const pageNum = Math.max(1, parseInt(page));
         const limitNum = Math.max(1, parseInt(limit) || 10);
         const noLimit = all === 'true' || parseInt(limit) === 0; // all=true OR limit=0 means no limit
@@ -239,32 +239,44 @@ router.get('/tracking/:dept', async (req, res) => {
         if (buyer) orderFilter.buyer = { $regex: buyer, $options: 'i' };
         if (search) orderFilter.orderNo = { $regex: search, $options: 'i' };
 
-        // Get confirmed orders from Order collection
-        let query = Order.find(orderFilter, { orderNo: 1, buyer: 1, bookingDate: 1 }).sort({ orderNo: -1 });
-        if (!noLimit) {
-            query = query.skip(skip).limit(limitNum);
-        }
-
-        const [confirmedOrders, total] = await Promise.all([
-            query.lean(),
-            Order.countDocuments(orderFilter)
-        ]);
+        // Get ALL confirmed orders (no pagination at DB level — filter by status after)
+        const confirmedOrders = await Order.find(orderFilter, { orderNo: 1, buyer: 1, bookingDate: 1 })
+            .sort({ orderNo: -1 }).lean();
 
         const orderNos = confirmedOrders.map(o => o.orderNo);
 
+        if (orderNos.length === 0) {
+            return res.status(200).json({ planDocs: [], orderMap: {}, total: 0, page: 1, limit: limitNum, totalPages: 0, buyers: [] });
+        }
+
+        const trackingOrderNos = confirmedOrders.map(o => o.orderNo);
+
         // Fetch plan data only for this page's orders
         const planDocs = await OrderDate.find(
-            { orderNo: { $in: orderNos } },
+            { orderNo: { $in: trackingOrderNos } },
             { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [`${dbDept}Actual`]: 1 }
         ).lean();
 
         // Pad missing OrderDate entries
         const planDocSet = new Set(planDocs.map(p => p.orderNo));
-        orderNos.forEach(orderNo => {
+        trackingOrderNos.forEach(orderNo => {
             if (!planDocSet.has(orderNo)) {
                 planDocs.push({ orderNo, [dbDept]: [] });
             }
         });
+
+        // Filter by Pending/Complete status (based on actualEnd in OrderDate)
+        const actualField = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
+        let filteredPlanDocs = planDocs;
+        if (status === 'Pending' || status === 'Complete') {
+            filteredPlanDocs = planDocs.filter(plan => {
+                const actual = plan[actualField];
+                const hasActualEnd = actual && actual.actualEnd && actual.actualEnd.trim() !== '';
+                if (status === 'Pending') return !hasActualEnd;
+                if (status === 'Complete') return hasActualEnd;
+                return true;
+            });
+        }
 
         // Build orderMap
         const orderMap = {};
@@ -275,13 +287,17 @@ router.get('/tracking/:dept', async (req, res) => {
         const allBuyers = await Order.distinct('buyer', buyerFilter);
         const buyers = [...new Set(allBuyers.filter(b => b && b.trim() !== '' && b !== 'N/A').map(b => b.trim().toUpperCase()))].sort();
 
+        // Paginate the filtered results
+        const totalFiltered = filteredPlanDocs.length;
+        const paginatedDocs = noLimit ? filteredPlanDocs : filteredPlanDocs.slice(skip, skip + limitNum);
+
         res.status(200).json({
-            planDocs,
+            planDocs: paginatedDocs,
             orderMap,
-            total,
+            total: totalFiltered,
             page: noLimit ? 1 : pageNum,
-            limit: noLimit ? total : limitNum,
-            totalPages: noLimit ? 1 : Math.ceil(total / limitNum),
+            limit: noLimit ? totalFiltered : limitNum,
+            totalPages: noLimit ? 1 : Math.ceil(totalFiltered / limitNum),
             buyers
         });
     } catch (error) {
