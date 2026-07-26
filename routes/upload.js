@@ -279,6 +279,13 @@ router.post('/save-dates', async (req, res) => {
                     await Order.updateOne({ orderNo }, { $set: update });
                 }
             }
+
+            // If actual data saved, store actualEnd in Order for fast tracking queries
+            if (actualData && department.includes('Actual')) {
+                const baseDept = department.replace('Actual', '');
+                const actualEndField = `${baseDept}ActualEnd`;
+                await Order.updateOne({ orderNo }, { $set: { [actualEndField]: actualData.actualEnd || '' } });
+            }
         } catch (e) { console.error('Status update error:', e.message); }
     } catch (error) {
         console.error("Save Dates Error:", error);

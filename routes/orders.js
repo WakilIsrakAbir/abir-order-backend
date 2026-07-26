@@ -291,9 +291,13 @@ router.get('/tracking/:dept', async (req, res) => {
         const totalFiltered = filteredPlanDocs.length;
         const paginatedDocs = noLimit ? filteredPlanDocs : filteredPlanDocs.slice(skip, skip + limitNum);
 
+        // Only keep orderMap entries for paginated docs (save memory)
+        const paginatedOrderMap = {};
+        paginatedDocs.forEach(p => { if (orderMap[p.orderNo]) paginatedOrderMap[p.orderNo] = orderMap[p.orderNo]; });
+
         res.status(200).json({
             planDocs: paginatedDocs,
-            orderMap,
+            orderMap: paginatedOrderMap,
             total: totalFiltered,
             page: noLimit ? 1 : pageNum,
             limit: noLimit ? totalFiltered : limitNum,
