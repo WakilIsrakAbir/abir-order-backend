@@ -304,7 +304,7 @@ router.get('/report-download/:dept', async (req, res) => {
 
         // Only fetch orderNo (minimal projection) — plan data has itemData already
         const filter = {
-            [statusField]: { $in: ['Confirm', 'Tentative'] }
+            [statusField]: { $in: ['Pending', 'Confirm', 'Tentative'] }
         };
 
         const orders = await Order.find(filter, { orderNo: 1, buyer: 1 }).lean();
@@ -334,7 +334,8 @@ router.get('/report-download/:dept', async (req, res) => {
         planDocs.forEach(plan => {
             const items = plan[dept] || [];
             items.forEach(item => {
-                if (item.planType === 'Confirm' || item.planType === 'Tentative') {
+                // Include all items (Pending, Confirm, Tentative)
+                {
                     let row = { ...(item.itemData || {}) };
                     row['OrderNo'] = plan.orderNo;
                     if (!row['Buyer']) row['Buyer'] = orderBuyerMap[plan.orderNo] || '';
@@ -397,13 +398,84 @@ router.get('/report-download/:dept', async (req, res) => {
             });
         });
 
+        // Also include orders with items but no plan saved yet (pure Pending)
+        const planDocOrderNos = new Set(planDocs.map(p => p.orderNo));
+        for (const order of orders) {
+            if (!planDocOrderNos.has(order.orderNo)) {
+                // This order has dept items but no plan — include with empty dates
+                const items = await Order.findOne({ orderNo: order.orderNo }, { [`${dept}Items`]: 1 }).lean();
+                if (items && items[`${dept}Items`]) {
+                    items[`${dept}Items`].forEach(itemData => {
+                        let row = { ...itemData };
+                        row['OrderNo'] = order.orderNo;
+                        if (!row['Buyer']) row['Buyer'] = order.buyer || '';
+                        if (dept === 'delivery') {
+                            row['Knit Start Date'] = '';
+                            row['Knit End Date'] = '';
+                            row['Knit Plan Type'] = '';
+                            row['Dyeing Start Date'] = '';
+                            row['Dyeing End Date'] = '';
+                            row['Dyeing Plan Type'] = '';
+                            row['Delivery Plan Start'] = '';
+                            row['Delivery Plan End'] = '';
+                            row['Delivery Plan Type'] = '';
+                            row['Delivery Plan Start (Floor)'] = '';
+                            row['Delivery Plan End (Floor)'] = '';
+                            row['Delivery Plan Type (Floor)'] = '';
+                            row['Limitation'] = '';
+                            row['Remarks'] = '';
+                        } else {
+                            row['Plan Start Date'] = '';
+                            row['Plan End Date'] = '';
+                            row['Plan Type'] = '';
+                            row['Limitation'] = '';
+                            row['Remarks'] = '';
+                        }
+                        allRows.push(row);
+                    });
+                }
+            }
+        }
+
         if (allRows.length === 0) {
             return res.status(404).json({ message: 'No data to export' });
         }
 
-        // Generate Excel
+        // Generate Excel with proper date formatting
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.json_to_sheet(allRows);
+
+        // Convert date strings to Excel date numbers
+        if (ws['!ref']) {
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            const headers = [];
+            for (let C = range.s.c; C <= range.e.c; ++C) {
+                const cell = ws[XLSX.utils.encode_cell({ r: 0, c: C })];
+                headers[C] = cell ? String(cell.v).toLowerCase() : '';
+            }
+
+            for (let R = 1; R <= range.e.r; ++R) {
+                for (let C = range.s.c; C <= range.e.c; ++C) {
+                    const h = headers[C];
+                    const isDateCol = h.includes('date') || h.includes('start') || h.includes('end');
+                    if (!isDateCol) continue;
+
+                    const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+                    const cell = ws[cellRef];
+                    if (!cell || !cell.v || cell.v === '' || cell.v === 'N/A' || cell.v === '-') continue;
+
+                    const d = new Date(cell.v);
+                    if (!isNaN(d.getTime())) {
+                        // Convert to Excel serial date number
+                        const excelDate = (d.getTime() / 86400000) + 25569;
+                        cell.t = 'n';
+                        cell.v = excelDate;
+                        cell.z = 'dd/mm/yyyy';
+                    }
+                }
+            }
+        }
+
         XLSX.utils.book_append_sheet(wb, ws, `${dept}_Report`);
 
         const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
