@@ -228,45 +228,90 @@ router.get('/tracking/:dept', async (req, res) => {
         const { page = 1, limit = 10, buyer = '', search = '', all = '', status = '' } = req.query;
         const pageNum = Math.max(1, parseInt(page));
         const limitNum = Math.max(1, parseInt(limit) || 10);
-        const noLimit = all === 'true' || parseInt(limit) === 0; // all=true OR limit=0 means no limit
+        const noLimit = all === 'true' || parseInt(limit) === 0;
         const skip = noLimit ? 0 : (pageNum - 1) * limitNum;
 
         const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
         const statusField = `${dbDept}PlanStatus`;
+        const actualField = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
 
-        // Build filter for Order collection
-        const orderFilter = { [statusField]: 'Confirm' };
+        // 1. Get Confirmed + Completed orders from Order collection
+        const orderFilter = { [statusField]: { $in: ['Confirm', 'Completed'] } };
         if (buyer) orderFilter.buyer = { $regex: buyer, $options: 'i' };
         if (search) orderFilter.orderNo = { $regex: search, $options: 'i' };
 
-        // Get ALL confirmed orders (no pagination at DB level — filter by status after)
         const confirmedOrders = await Order.find(orderFilter, { orderNo: 1, buyer: 1, bookingDate: 1 })
             .sort({ orderNo: -1 }).lean();
 
         const orderNos = confirmedOrders.map(o => o.orderNo);
 
-        if (orderNos.length === 0) {
+        // 2. Find orphaned tracking data — OrderDate docs with actual data
+        //    for orders NOT in the confirmed/completed list
+        const orphanMatch = [{ orderNo: { $nin: orderNos } }];
+        if (search) orphanMatch.push({ orderNo: { $regex: search, $options: 'i' } });
+
+        const orphanFilter = {
+            $and: orphanMatch,
+            $or: [
+                { [`${actualField}.actualStart`]: { $exists: true, $ne: '' } },
+                { [`${actualField}.actualEnd`]: { $exists: true, $ne: '' } },
+                { [`${actualField}.failReason`]: { $exists: true, $ne: '' } },
+                { [`${actualField}.relatedDept`]: { $exists: true, $ne: '' } }
+            ]
+        };
+
+        const orphanedDocs = await OrderDate.find(
+            orphanFilter,
+            { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [actualField]: 1 }
+        ).lean();
+
+        // Get Order info for orphaned orders (buyer/bookingDate)
+        const orphanedOrderNos = orphanedDocs.map(d => d.orderNo);
+        let orphanedOrderInfos = [];
+        if (orphanedOrderNos.length > 0) {
+            const orphanOrderFilter = { orderNo: { $in: orphanedOrderNos } };
+            if (buyer) orphanOrderFilter.buyer = { $regex: buyer, $options: 'i' };
+            orphanedOrderInfos = await Order.find(orphanOrderFilter, { orderNo: 1, buyer: 1, bookingDate: 1 }).lean();
+        }
+
+        // If buyer filter active, only keep orphaned docs with matching Order buyer
+        let filteredOrphanedDocs = orphanedDocs;
+        if (buyer) {
+            const orphanedWithBuyer = new Set(orphanedOrderInfos.map(o => o.orderNo));
+            filteredOrphanedDocs = orphanedDocs.filter(d => orphanedWithBuyer.has(d.orderNo));
+        }
+
+        // 3. Merge all tracking orderNos
+        const allTrackingOrderNos = [...orderNos, ...filteredOrphanedDocs.map(d => d.orderNo)];
+
+        if (allTrackingOrderNos.length === 0) {
             return res.status(200).json({ planDocs: [], orderMap: {}, total: 0, page: 1, limit: limitNum, totalPages: 0, buyers: [] });
         }
 
-        const trackingOrderNos = confirmedOrders.map(o => o.orderNo);
+        // 4. Fetch plan data for confirmed/completed orders
+        const planDocs = orderNos.length > 0 ? await OrderDate.find(
+            { orderNo: { $in: orderNos } },
+            { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [actualField]: 1 }
+        ).lean() : [];
 
-        // Fetch plan data only for this page's orders
-        const planDocs = await OrderDate.find(
-            { orderNo: { $in: trackingOrderNos } },
-            { orderNo: 1, [dbDept]: 1, [`${dbDept}Status`]: 1, [`${dbDept}CompletedDate`]: 1, [`${dbDept}Actual`]: 1 }
-        ).lean();
-
-        // Pad missing OrderDate entries
+        // Pad missing OrderDate entries for confirmed/completed orders
         const planDocSet = new Set(planDocs.map(p => p.orderNo));
-        trackingOrderNos.forEach(orderNo => {
+        orderNos.forEach(orderNo => {
             if (!planDocSet.has(orderNo)) {
                 planDocs.push({ orderNo, [dbDept]: [] });
+                planDocSet.add(orderNo);
             }
         });
 
-        // Filter by Pending/Complete status (based on actualEnd in OrderDate)
-        const actualField = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
+        // Add orphaned docs to planDocs (avoid duplicates)
+        filteredOrphanedDocs.forEach(doc => {
+            if (!planDocSet.has(doc.orderNo)) {
+                planDocs.push(doc);
+                planDocSet.add(doc.orderNo);
+            }
+        });
+
+        // 5. Filter by Pending/Complete status (based on actualEnd)
         let filteredPlanDocs = planDocs;
         if (status === 'Pending' || status === 'Complete') {
             filteredPlanDocs = planDocs.filter(plan => {
@@ -278,16 +323,19 @@ router.get('/tracking/:dept', async (req, res) => {
             });
         }
 
-        // Build orderMap
+        // 6. Build orderMap (confirmed/completed + orphaned)
         const orderMap = {};
         confirmedOrders.forEach(o => { orderMap[o.orderNo] = o; });
+        orphanedOrderInfos.forEach(o => { if (!orderMap[o.orderNo]) orderMap[o.orderNo] = o; });
 
-        // Get all buyers for filter tabs (from all confirmed orders, not just current page)
-        const buyerFilter = { [statusField]: 'Confirm' };
-        const allBuyers = await Order.distinct('buyer', buyerFilter);
-        const buyers = [...new Set(allBuyers.filter(b => b && b.trim() !== '' && b !== 'N/A').map(b => b.trim().toUpperCase()))].sort();
+        // 7. Get all buyers for filter tabs (include all sources)
+        const buyerFilterQuery = { [statusField]: { $in: ['Confirm', 'Completed'] } };
+        const allBuyersList = await Order.distinct('buyer', buyerFilterQuery);
+        // Also include buyers from orphaned orders
+        orphanedOrderInfos.forEach(o => { if (o.buyer) allBuyersList.push(o.buyer); });
+        const buyers = [...new Set(allBuyersList.filter(b => b && b.trim() !== '' && b !== 'N/A').map(b => b.trim().toUpperCase()))].sort();
 
-        // Paginate the filtered results
+        // 8. Paginate the filtered results
         const totalFiltered = filteredPlanDocs.length;
         const paginatedDocs = noLimit ? filteredPlanDocs : filteredPlanDocs.slice(skip, skip + limitNum);
 
@@ -523,10 +571,11 @@ router.get('/tracking-download/:dept', async (req, res) => {
 
         const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
         const statusField = `${dbDept}PlanStatus`;
+        const actualKey = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
 
-        // Get all confirmed orders
+        // Get confirmed + completed orders
         const confirmedOrders = await Order.find(
-            { [statusField]: 'Confirm' },
+            { [statusField]: { $in: ['Confirm', 'Completed'] } },
             { orderNo: 1, buyer: 1, bookingDate: 1 }
         ).lean();
 
@@ -534,11 +583,44 @@ router.get('/tracking-download/:dept', async (req, res) => {
         const orderMap = {};
         confirmedOrders.forEach(o => { orderMap[o.orderNo] = o; });
 
-        // Get plan data
-        const planDocs = await OrderDate.find(
-            { orderNo: { $in: orderNos } },
-            { orderNo: 1, [dbDept]: 1, [`${dbDept}Actual`]: 1 }
+        // Find orphaned tracking data from OrderDate
+        const orphanedDocs = await OrderDate.find(
+            {
+                orderNo: { $nin: orderNos },
+                $or: [
+                    { [`${actualKey}.actualStart`]: { $exists: true, $ne: '' } },
+                    { [`${actualKey}.actualEnd`]: { $exists: true, $ne: '' } },
+                    { [`${actualKey}.failReason`]: { $exists: true, $ne: '' } },
+                    { [`${actualKey}.relatedDept`]: { $exists: true, $ne: '' } }
+                ]
+            },
+            { orderNo: 1, [dbDept]: 1, [actualKey]: 1 }
         ).lean();
+
+        // Get Order info for orphaned orders
+        const orphanedOrderNos = orphanedDocs.map(d => d.orderNo);
+        if (orphanedOrderNos.length > 0) {
+            const orphanedOrderInfos = await Order.find(
+                { orderNo: { $in: orphanedOrderNos } },
+                { orderNo: 1, buyer: 1, bookingDate: 1 }
+            ).lean();
+            orphanedOrderInfos.forEach(o => { if (!orderMap[o.orderNo]) orderMap[o.orderNo] = o; });
+        }
+
+        // Get plan data for confirmed/completed orders
+        const planDocs = orderNos.length > 0 ? await OrderDate.find(
+            { orderNo: { $in: orderNos } },
+            { orderNo: 1, [dbDept]: 1, [actualKey]: 1 }
+        ).lean() : [];
+
+        // Add orphaned docs to planDocs
+        const planDocSet = new Set(planDocs.map(p => p.orderNo));
+        orphanedDocs.forEach(doc => {
+            if (!planDocSet.has(doc.orderNo)) {
+                planDocs.push(doc);
+                planDocSet.add(doc.orderNo);
+            }
+        });
 
         // Build tracking rows
         let rows = [];
@@ -566,7 +648,6 @@ router.get('/tracking-download/:dept', async (req, res) => {
                 }
             }
 
-            const actualKey = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
             let actualStart = '', actualEnd = '', failReason = '', relatedDept = '';
             if (plan[actualKey]) {
                 actualStart = plan[actualKey].actualStart || '';
@@ -603,7 +684,7 @@ router.get('/tracking-download/:dept', async (req, res) => {
             });
         });
 
-        // Add orders without OrderDate docs
+        // Add orders without OrderDate docs (only for Pending status)
         orderNos.forEach(orderNo => {
             if (!processedOrderNos.has(orderNo)) {
                 const orderInfo = orderMap[orderNo] || {};
