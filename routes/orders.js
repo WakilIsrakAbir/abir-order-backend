@@ -359,6 +359,90 @@ router.get('/tracking/:dept', async (req, res) => {
 });
 
 // ==========================================
+// Helper: Normalize raw Excel item data to consistent column keys
+// Ensures Pending items (raw Excel) match Confirm/Tentative items (saved plan)
+// ==========================================
+function normalizeItemRow(rawItem, dept) {
+    const rawKeys = Object.keys(rawItem);
+    const getField = (keys) => {
+        // Direct key match first
+        for (const k of keys) {
+            if (rawItem[k] !== undefined && rawItem[k] !== null && rawItem[k] !== '') return rawItem[k];
+        }
+        // Case-insensitive fuzzy match
+        for (const k of keys) {
+            const normK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const found = rawKeys.find(rk => rk.toLowerCase().replace(/[^a-z0-9]/g, '') === normK);
+            if (found && rawItem[found] !== undefined && rawItem[found] !== null) return rawItem[found];
+        }
+        return '';
+    };
+
+    if (dept === 'knitting' || dept === 'delivery') {
+        return {
+            OrderNo: getField(['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No']),
+            Buyer: getField(['Buyer', 'BuyerName', 'Customer']),
+            Color: getField(['Color', 'Colour', 'Fab Color']),
+            FabricConstruction: getField(['FabricConstruction', 'Construction', 'Fab Const', 'Fabric']),
+            GSM: getField(['GSM', 'G.S.M']),
+            RequiredQtyKgs: getField(['RequiredQtyKgs', 'Req Qty', 'Qty']),
+            Allowance: getField(['Allowance %', 'Allowance']),
+            YarnReq: getField(['Yarn req.', 'YarnReq', 'Yarn Req']),
+            AllocatedQty: getField(['Allocated Qty', 'AllocatedQty']),
+            YarnBala: getField(['Yarn bala.', 'YarnBala', 'Yarn Bala']),
+            GreyReq: getField(['Grey Req.', 'GreyReq', 'Grey Req']),
+            KnitProd: getField(['Knit Prod.', 'KnitProd', 'Knit Prod']),
+            KnitBala: getField(['Knit. Bala.', 'KnitBala', 'Knit Bala.', 'Knit Bala']),
+            NetReceivedQtyKgs: getField(['NetReceivedQtyKgs', 'NetReceivedQty', 'ReceivedQty']),
+            NetDeliveryQtyKgs: getField(['NetDeliveryQtyKgs', 'NetDeliveryQty', 'DeliveryQty']),
+            DeliBal: getField(['Deli. Bal.', 'Deli Bal.', 'DeliBal', 'Delivery Balance', 'Deli. Bala.']),
+            RFD: getField(['RFD']),
+            Slowmoving: getField(['Slowmoving']),
+            FFStock: getField(['FF Stock', 'FFStock']),
+            BPQty: getField(['BP Qty', 'BPQty']),
+            DyeingProd: getField(['Dyeing Prod.', 'DyeingProd', 'Dyeing Prod']),
+            DyeingBala: getField(['Dyeing Bala.', 'DyeingBala', 'Dyeing Bala']),
+        };
+    } else if (dept === 'dyeing' || dept === 'finishing') {
+        return {
+            OrderNo: getField(['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No']),
+            Color: getField(['Color', 'Colour', 'Fab Color']),
+            RequiredQtyKgs: getField(['RequiredQtyKgs', 'Req Qty', 'Qty']),
+            Buyer: getField(['Buyer', 'BuyerName', 'Customer']),
+            Unit: getField(['Unit']),
+            ProcessName: getField(['Process Name', 'ProcessName', 'Process']),
+            GreyReq: getField(['Grey Req.', 'GreyReq', 'Grey Req']),
+            KnitProd: getField(['Knit Prod.', 'KnitProd', 'Knit Prod']),
+            KnitBala: getField(['Knit. Bala.', 'KnitBala', 'Knit Bala.', 'Knit Bala']),
+            BPQty: getField(['BP Qty', 'BPQty']),
+            DyeingProd: getField(['Dyeing Prod.', 'DyeingProd', 'Dyeing Prod']),
+            DyeingBala: getField(['Dyeing Bala.', 'DyeingBala', 'Dyeing Bala']),
+            NetReceivedQtyKgs: getField(['NetReceivedQtyKgs', 'NetReceivedQty', 'ReceivedQty']),
+            NetDeliveryQtyKgs: getField(['NetDeliveryQtyKgs', 'NetDeliveryQty', 'DeliveryQty']),
+            RFD: getField(['RFD']),
+            Slowmoving: getField(['Slowmoving']),
+            FFStock: getField(['FF Stock', 'FFStock']),
+        };
+    } else if (dept === 'yd') {
+        return {
+            OrderNo: getField(['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No']),
+            'Booking Type': getField(['Booking Type', 'Type', 'YD Type']),
+            YDB: getField(['YDB', 'YD B']),
+            'YD Booking Date': getField(['YD Booking Date', 'Date', 'Booking Date']),
+            Buyer: getField(['Buyer', 'BuyerName', 'Customer']),
+            'YD REQ.': getField(['YD REQ.', 'YD REQ', 'YD Req', 'Requirement']),
+            DYED: getField(['DYED', 'Dyed', 'Dye']),
+            'YD BALANCE': getField(['YD BALANCE', 'YD Balance']),
+            'YD Delivered': getField(['YD Delivered', 'Delivered', 'Delivery']),
+            'YD DELIVERY BALANCE': getField(['YD DELIVERY BALANCE', 'YD Balance_1', 'YD Balance 2']),
+            'Barrier Qty.': getField(['Barrier Qty.', 'Barrier Qty', 'Barrier']),
+            'Workable Qty.': getField(['Workable Qty.', 'Workable Qty', 'Workable']),
+        };
+    }
+    return rawItem; // fallback
+}
+
+// ==========================================
 // GET /api/orders/report-download/:dept — Generate and download Excel report directly
 // Uses projection to minimize data loaded from MongoDB
 // ==========================================
@@ -370,9 +454,14 @@ router.get('/report-download/:dept', async (req, res) => {
         const statusField = `${dept}PlanStatus`;
         const itemsField = `${dept}Items`;
 
-        // Only fetch orderNo (minimal projection) — plan data has itemData already
+        // Department-specific status filter:
+        // Delivery: Pending + Confirm + Tentative
+        // Knitting/Dyeing/YD/Finishing: Confirm + Tentative only
+        const statusList = dept === 'delivery'
+            ? ['Pending', 'Confirm', 'Tentative']
+            : ['Confirm', 'Tentative'];
         const filter = {
-            [statusField]: { $in: ['Pending', 'Confirm', 'Tentative'] }
+            [statusField]: { $in: statusList }
         };
 
         const orders = await Order.find(filter, { orderNo: 1, buyer: 1 }).lean();
@@ -397,87 +486,85 @@ router.get('/report-download/:dept', async (req, res) => {
         const orderBuyerMap = {};
         orders.forEach(o => { orderBuyerMap[o.orderNo] = o.buyer; });
 
-        // Build rows for Excel
+        // Build rows for Excel — normalize all items with consistent column keys
         let allRows = [];
         planDocs.forEach(plan => {
             const items = plan[dept] || [];
             items.forEach(item => {
-                // Include all items (Pending, Confirm, Tentative)
-                {
-                    let row = { ...(item.itemData || {}) };
-                    row['OrderNo'] = plan.orderNo;
-                    if (!row['Buyer']) row['Buyer'] = orderBuyerMap[plan.orderNo] || '';
+                // Normalize item data to consistent column keys
+                let row = normalizeItemRow(item.itemData || {}, dept);
+                row['OrderNo'] = plan.orderNo;
+                if (!row['Buyer']) row['Buyer'] = orderBuyerMap[plan.orderNo] || '';
 
-                    if (dept === 'delivery') {
-                        // Include knitting plan dates (matched by Color + FabricConstruction + GSM)
-                        let knitStart = '', knitEnd = '', knitType = '';
-                        let dyeStart = '', dyeEnd = '', dyeType = '';
+                if (dept === 'delivery') {
+                    // Include knitting plan dates (matched by Color + FabricConstruction + GSM)
+                    let knitStart = '', knitEnd = '', knitType = '';
+                    let dyeStart = '', dyeEnd = '', dyeType = '';
 
-                        const myColor = String(row.Color || '').trim().toLowerCase();
-                        const myConst = String(row.FabricConstruction || '').trim().toLowerCase();
-                        const myGSM = String(row.GSM || '').trim().toLowerCase();
+                    const myColor = String(row.Color || '').trim().toLowerCase();
+                    const myConst = String(row.FabricConstruction || '').trim().toLowerCase();
+                    const myGSM = String(row.GSM || '').trim().toLowerCase();
 
-                        if (plan.knitting && Array.isArray(plan.knitting)) {
-                            const kItem = plan.knitting.find(k => k.itemData &&
-                                String(k.itemData.Color || '').trim().toLowerCase() === myColor &&
-                                String(k.itemData.FabricConstruction || '').trim().toLowerCase() === myConst &&
-                                String(k.itemData.GSM || '').trim().toLowerCase() === myGSM);
-                            if (kItem) {
-                                knitStart = kItem.startDate || '';
-                                knitEnd = kItem.endDate || '';
-                                knitType = kItem.planType || '';
-                            }
+                    if (plan.knitting && Array.isArray(plan.knitting)) {
+                        const kItem = plan.knitting.find(k => k.itemData &&
+                            String(k.itemData.Color || '').trim().toLowerCase() === myColor &&
+                            String(k.itemData.FabricConstruction || '').trim().toLowerCase() === myConst &&
+                            String(k.itemData.GSM || '').trim().toLowerCase() === myGSM);
+                        if (kItem) {
+                            knitStart = kItem.startDate || '';
+                            knitEnd = kItem.endDate || '';
+                            knitType = kItem.planType || '';
                         }
-
-                        if (plan.dyeing && Array.isArray(plan.dyeing)) {
-                            const dItem = plan.dyeing.find(d => d.itemData &&
-                                String(d.itemData.Color || '').trim().toLowerCase() === myColor);
-                            if (dItem) {
-                                dyeStart = dItem.startDate || '';
-                                dyeEnd = dItem.endDate || '';
-                                dyeType = dItem.planType || '';
-                            }
-                        }
-
-                        row['Knit Start Date'] = knitStart;
-                        row['Knit End Date'] = knitEnd;
-                        row['Knit Plan Type'] = knitType;
-                        row['Dyeing Start Date'] = dyeStart;
-                        row['Dyeing End Date'] = dyeEnd;
-                        row['Dyeing Plan Type'] = dyeType;
-                        row['Delivery Plan Start'] = item.startDate || '';
-                        row['Delivery Plan End'] = item.endDate || '';
-                        row['Delivery Plan Type'] = item.planType || '';
-                        row['Delivery Plan Start (Floor)'] = item.floorStartDate || '';
-                        row['Delivery Plan End (Floor)'] = item.floorEndDate || '';
-                        row['Delivery Plan Type (Floor)'] = item.floorPlanType || '';
-                        row['Limitation'] = item.limitation || '';
-                        row['Remarks'] = item.remarks || '';
-                    } else {
-                        row['Plan Start Date'] = item.startDate || '';
-                        row['Plan End Date'] = item.endDate || '';
-                        row['Plan Type'] = item.planType || '';
-                        row['Limitation'] = item.limitation || '';
-                        row['Remarks'] = item.remarks || '';
                     }
 
-                    allRows.push(row);
+                    if (plan.dyeing && Array.isArray(plan.dyeing)) {
+                        const dItem = plan.dyeing.find(d => d.itemData &&
+                            String(d.itemData.Color || '').trim().toLowerCase() === myColor);
+                        if (dItem) {
+                            dyeStart = dItem.startDate || '';
+                            dyeEnd = dItem.endDate || '';
+                            dyeType = dItem.planType || '';
+                        }
+                    }
+
+                    row['Knit Start Date'] = knitStart;
+                    row['Knit End Date'] = knitEnd;
+                    row['Knit Plan Type'] = knitType;
+                    row['Dyeing Start Date'] = dyeStart;
+                    row['Dyeing End Date'] = dyeEnd;
+                    row['Dyeing Plan Type'] = dyeType;
+                    row['Delivery Plan Start'] = item.startDate || '';
+                    row['Delivery Plan End'] = item.endDate || '';
+                    row['Delivery Plan Type'] = item.planType || '';
+                    row['Delivery Plan Start (Floor)'] = item.floorStartDate || '';
+                    row['Delivery Plan End (Floor)'] = item.floorEndDate || '';
+                    row['Delivery Plan Type (Floor)'] = item.floorPlanType || '';
+                    row['Limitation'] = item.limitation || '';
+                    row['Remarks'] = item.remarks || '';
+                } else {
+                    row['Plan Start Date'] = item.startDate || '';
+                    row['Plan End Date'] = item.endDate || '';
+                    row['Plan Type'] = item.planType || '';
+                    row['Limitation'] = item.limitation || '';
+                    row['Remarks'] = item.remarks || '';
                 }
+
+                allRows.push(row);
             });
         });
 
-        // Also include orders with items but no plan saved yet (pure Pending)
-        const planDocOrderNos = new Set(planDocs.map(p => p.orderNo));
-        for (const order of orders) {
-            if (!planDocOrderNos.has(order.orderNo)) {
-                // This order has dept items but no plan — include with empty dates
-                const items = await Order.findOne({ orderNo: order.orderNo }, { [`${dept}Items`]: 1 }).lean();
-                if (items && items[`${dept}Items`]) {
-                    items[`${dept}Items`].forEach(itemData => {
-                        let row = { ...itemData };
-                        row['OrderNo'] = order.orderNo;
-                        if (!row['Buyer']) row['Buyer'] = order.buyer || '';
-                        if (dept === 'delivery') {
+        // Also include orders with items but no plan saved yet (pure Pending — only for Delivery)
+        if (dept === 'delivery') {
+            const planDocOrderNos = new Set(planDocs.map(p => p.orderNo));
+            for (const order of orders) {
+                if (!planDocOrderNos.has(order.orderNo)) {
+                    const items = await Order.findOne({ orderNo: order.orderNo }, { [`${dept}Items`]: 1 }).lean();
+                    if (items && items[`${dept}Items`]) {
+                        items[`${dept}Items`].forEach(itemData => {
+                            // Normalize raw Excel item data to consistent column keys
+                            let row = normalizeItemRow(itemData, dept);
+                            row['OrderNo'] = order.orderNo;
+                            if (!row['Buyer']) row['Buyer'] = order.buyer || '';
                             row['Knit Start Date'] = '';
                             row['Knit End Date'] = '';
                             row['Knit Plan Type'] = '';
@@ -492,15 +579,9 @@ router.get('/report-download/:dept', async (req, res) => {
                             row['Delivery Plan Type (Floor)'] = '';
                             row['Limitation'] = '';
                             row['Remarks'] = '';
-                        } else {
-                            row['Plan Start Date'] = '';
-                            row['Plan End Date'] = '';
-                            row['Plan Type'] = '';
-                            row['Limitation'] = '';
-                            row['Remarks'] = '';
-                        }
-                        allRows.push(row);
-                    });
+                            allRows.push(row);
+                        });
+                    }
                 }
             }
         }
@@ -509,20 +590,34 @@ router.get('/report-download/:dept', async (req, res) => {
             return res.status(404).json({ message: 'No data to export' });
         }
 
-        // Generate Excel with proper date formatting
+        // Generate Excel with proper date and number formatting
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.json_to_sheet(allRows);
 
-        // Convert date strings to Excel date numbers
+        // Post-process cells: convert dates and OrderNo to proper formats
         if (ws['!ref']) {
             const range = XLSX.utils.decode_range(ws['!ref']);
             const headers = [];
+            let orderNoCol = -1;
             for (let C = range.s.c; C <= range.e.c; ++C) {
                 const cell = ws[XLSX.utils.encode_cell({ r: 0, c: C })];
-                headers[C] = cell ? String(cell.v).toLowerCase() : '';
+                const hdr = cell ? String(cell.v) : '';
+                headers[C] = hdr.toLowerCase();
+                if (hdr === 'OrderNo') orderNoCol = C;
             }
 
             for (let R = 1; R <= range.e.r; ++R) {
+                // Convert OrderNo to number format
+                if (orderNoCol >= 0) {
+                    const cellRef = XLSX.utils.encode_cell({ r: R, c: orderNoCol });
+                    const cell = ws[cellRef];
+                    if (cell && cell.v) {
+                        const num = Number(cell.v);
+                        if (!isNaN(num)) { cell.t = 'n'; cell.v = num; }
+                    }
+                }
+
+                // Convert date columns to Excel date numbers
                 for (let C = range.s.c; C <= range.e.c; ++C) {
                     const h = headers[C];
                     const isDateCol = h.includes('date') || h.includes('start') || h.includes('end');
@@ -534,7 +629,6 @@ router.get('/report-download/:dept', async (req, res) => {
 
                     const d = new Date(cell.v);
                     if (!isNaN(d.getTime())) {
-                        // Convert to Excel serial date number
                         const excelDate = (d.getTime() / 86400000) + 25569;
                         cell.t = 'n';
                         cell.v = excelDate;
