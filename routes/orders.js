@@ -419,7 +419,7 @@ router.get('/tracking-download/:dept', async (req, res) => {
                 }
             }
 
-            const actualKey = dept + 'Actual';
+            const actualKey = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
             let actualStart = '', actualEnd = '', failReason = '', relatedDept = '';
             if (plan[actualKey]) {
                 actualStart = plan[actualKey].actualStart || '';
