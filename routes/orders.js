@@ -534,17 +534,57 @@ router.get('/report-download/:dept', async (req, res) => {
         for (let i = 0; i < orderNos.length; i += chunkSize) {
             const chunkOrderNos = orderNos.slice(i, i + chunkSize);
             
-            const planDocsChunk = await OrderDate.find(
-                { orderNo: { $in: chunkOrderNos }, [dept]: { $exists: true, $ne: [] } },
-                planProjection
-            ).lean();
+            const [planDocsChunk, orderItemsDocs] = await Promise.all([
+                OrderDate.find(
+                    { orderNo: { $in: chunkOrderNos }, [dept]: { $exists: true, $ne: [] } },
+                    planProjection
+                ).lean(),
+                dept === 'knitting' ? Order.find(
+                    { orderNo: { $in: chunkOrderNos } },
+                    { orderNo: 1, knittingItems: 1 }
+                ).lean() : Promise.resolve([])
+            ]);
+
+            const orderItemsMap = {};
+            if (dept === 'knitting') {
+                orderItemsDocs.forEach(d => {
+                    orderItemsMap[d.orderNo] = d.knittingItems || [];
+                });
+            }
 
             planDocsChunk.forEach(plan => {
                 planDocOrderNos.add(plan.orderNo);
                 const items = plan[dept] || [];
                 
+                let latestNormItems = [];
+                if (dept === 'knitting') {
+                    const latestItems = orderItemsMap[plan.orderNo] || [];
+                    latestNormItems = latestItems.map(li => normalizeItemRow(li, dept));
+                }
+                
                 items.forEach(item => {
                     let row = normalizeItemRow(item.itemData || {}, dept);
+                    
+                    if (dept === 'knitting') {
+                        const myColor = String(row.Color || '').trim().toLowerCase();
+                        const myConst = String(row.FabricConstruction || '').trim().toLowerCase();
+                        const myGSM = String(row.GSM || '').trim().toLowerCase();
+                        
+                        const latestMatch = latestNormItems.find(ln => 
+                            String(ln.Color || '').trim().toLowerCase() === myColor &&
+                            String(ln.FabricConstruction || '').trim().toLowerCase() === myConst &&
+                            String(ln.GSM || '').trim().toLowerCase() === myGSM
+                        );
+
+                        if (latestMatch) {
+                            if (latestMatch.KnitBala !== undefined && latestMatch.KnitBala !== '') row.KnitBala = latestMatch.KnitBala;
+                            if (latestMatch.KnitProd !== undefined && latestMatch.KnitProd !== '') row.KnitProd = latestMatch.KnitProd;
+                            if (latestMatch.GreyReq !== undefined && latestMatch.GreyReq !== '') row.GreyReq = latestMatch.GreyReq;
+                            if (latestMatch.AllocatedQty !== undefined && latestMatch.AllocatedQty !== '') row.AllocatedQty = latestMatch.AllocatedQty;
+                            if (latestMatch.YarnBala !== undefined && latestMatch.YarnBala !== '') row.YarnBala = latestMatch.YarnBala;
+                        }
+                    }
+
                     row['OrderNo'] = plan.orderNo;
                     if (!row['Buyer']) row['Buyer'] = orderBuyerMap[plan.orderNo] || '';
 
