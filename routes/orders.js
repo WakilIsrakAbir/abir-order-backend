@@ -87,7 +87,12 @@ router.get("/", async (req, res) => {
 
     // Search by orderNo
     if (search) {
-      filter.orderNo = { $regex: search, $options: "i" };
+      if (req.query.exact === 'true') {
+        // Exact match
+        filter.orderNo = { $regex: `^${search}$`, $options: "i" };
+      } else {
+        filter.orderNo = { $regex: search, $options: "i" };
+      }
     }
 
     // Only return orders that have items for this department
