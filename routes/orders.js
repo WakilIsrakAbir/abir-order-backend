@@ -249,6 +249,10 @@ router.get("/tracking/:dept", async (req, res) => {
       search = "",
       all = "",
       status = "",
+      startMin = "",
+      startMax = "",
+      endMin = "",
+      endMax = "",
     } = req.query;
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.max(1, parseInt(limit) || 10);
@@ -376,6 +380,66 @@ router.get("/tracking/:dept", async (req, res) => {
           actual && actual.actualEnd && actual.actualEnd.trim() !== "";
         if (status === "Pending") return !hasActualEnd;
         if (status === "Complete") return hasActualEnd;
+        return true;
+      });
+    }
+
+    const hasDateFilter = startMin || startMax || endMin || endMax;
+    if (hasDateFilter && filteredPlanInfo.length > 0) {
+      const filterOrderNos = filteredPlanInfo.map((p) => p.orderNo);
+      
+      const filterDocs = await OrderDate.find(
+        { orderNo: { $in: filterOrderNos } },
+        { orderNo: 1, [dbDept]: 1 }
+      ).lean();
+      
+      const filterOrders = await Order.find(
+        { orderNo: { $in: filterOrderNos } },
+        { orderNo: 1, [`${dbDept}Items`]: 1 }
+      ).lean();
+      
+      const filterOrdersMap = {};
+      filterOrders.forEach((o) => { filterOrdersMap[o.orderNo] = o[`${dbDept}Items`] || []; });
+
+      filteredPlanInfo = filteredPlanInfo.filter((plan) => {
+        const doc = filterDocs.find((d) => d.orderNo === plan.orderNo);
+        const rawItems = (doc && doc[dbDept] && doc[dbDept].length > 0) ? doc[dbDept] : (filterOrdersMap[plan.orderNo] || []);
+        
+        let startDates = [], endDates = [];
+        if (dept === "deliveryfloor") {
+          const floorItems = rawItems.filter((item) => {
+             const type = item.floorPlanType || item['Delivery Plan Type (Floor)'] || '';
+             return type === 'Confirm' || type === 'Tentative';
+          });
+          startDates = floorItems.map((item) => item.floorStartDate || item['Delivery Plan Start (Floor)'] || '').filter((d) => d && d !== '' && d !== '-');
+          endDates = floorItems.map((item) => item.floorEndDate || item['Delivery Plan End (Floor)'] || '').filter((d) => d && d !== '' && d !== '-');
+        } else {
+          startDates = rawItems.map((item) => item.startDate || item['Plan Start Date'] || item['Plan Start'] || item['Start Date'] || item['Knit Start Date'] || item['Dyeing Start Date'] || (dbDept === 'delivery' ? item['Delivery Plan Start'] : '') || '').filter((d) => d && d !== '' && d !== '-');
+          endDates = rawItems.map((item) => item.endDate || item['Plan End Date'] || item['Plan End'] || item['End Date'] || item['Knit End Date'] || item['Dyeing End Date'] || (dbDept === 'delivery' ? item['Delivery Plan End'] : '') || '').filter((d) => d && d !== '' && d !== '-');
+        }
+        
+        startDates.sort();
+        endDates.sort();
+        
+        const pStart = startDates.length > 0 ? startDates[0] : '';
+        const pEnd = endDates.length > 0 ? endDates[endDates.length - 1] : '';
+
+        if (startMin && pStart) {
+          if (new Date(pStart).setHours(0,0,0,0) < new Date(startMin).setHours(0,0,0,0)) return false;
+        } else if (startMin && !pStart) return false;
+
+        if (startMax && pStart) {
+          if (new Date(pStart).setHours(0,0,0,0) > new Date(startMax).setHours(0,0,0,0)) return false;
+        } else if (startMax && !pStart) return false;
+
+        if (endMin && pEnd) {
+          if (new Date(pEnd).setHours(0,0,0,0) < new Date(endMin).setHours(0,0,0,0)) return false;
+        } else if (endMin && !pEnd) return false;
+
+        if (endMax && pEnd) {
+          if (new Date(pEnd).setHours(0,0,0,0) > new Date(endMax).setHours(0,0,0,0)) return false;
+        } else if (endMax && !pEnd) return false;
+
         return true;
       });
     }
