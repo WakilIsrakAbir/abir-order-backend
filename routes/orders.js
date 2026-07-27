@@ -908,6 +908,26 @@ router.get("/report-download/:dept", async (req, res) => {
               row["Floor Start Date"] = item.floorStartDate || "";
               row["Floor End Date"] = item.floorEndDate || "";
               row["Floor Plan Type"] = item.floorPlanType || "";
+
+              let knitStart = "", knitEnd = "";
+              const myColor = String(row.Color || "").trim().toLowerCase();
+              const myConst = String(row.FabricConstruction || "").trim().toLowerCase();
+              const myGSM = String(row.GSM || "").trim().toLowerCase();
+
+              if (plan.knitting && Array.isArray(plan.knitting)) {
+                const kItem = plan.knitting.find((k) =>
+                  k.itemData &&
+                  String(k.itemData.Color || "").trim().toLowerCase() === myColor &&
+                  String(k.itemData.FabricConstruction || "").trim().toLowerCase() === myConst &&
+                  String(k.itemData.GSM || "").trim().toLowerCase() === myGSM
+                );
+                if (kItem) {
+                  knitStart = kItem.startDate || "";
+                  knitEnd = kItem.endDate || "";
+                }
+              }
+              row["Knit Start Date"] = knitStart;
+              row["Knit End Date"] = knitEnd;
             }
             row["Limitation"] = item.limitation || "";
             row["Remarks"] = item.remarks || "";
