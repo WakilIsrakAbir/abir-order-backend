@@ -87,7 +87,7 @@ router.get("/", async (req, res) => {
 
     // Search by orderNo
     if (search) {
-      if (req.query.exact === 'true') {
+      if (req.query.exact === "true") {
         // Exact match
         filter.orderNo = { $regex: `^${search}$`, $options: "i" };
       } else {
@@ -273,6 +273,12 @@ router.get("/tracking/:dept", async (req, res) => {
       orderNo: 1,
       buyer: 1,
       bookingDate: 1,
+      knitStart: 1,
+      knitEnd: 1,
+      dyeStart: 1,
+      dyeEnd: 1,
+      deliStart: 1,
+      deliEnd: 1,
     })
       .sort({ orderNo: -1 })
       .lean();
@@ -332,17 +338,15 @@ router.get("/tracking/:dept", async (req, res) => {
     ];
 
     if (allTrackingOrderNos.length === 0) {
-      return res
-        .status(200)
-        .json({
-          planDocs: [],
-          orderMap: {},
-          total: 0,
-          page: 1,
-          limit: limitNum,
-          totalPages: 0,
-          buyers: [],
-        });
+      return res.status(200).json({
+        planDocs: [],
+        orderMap: {},
+        total: 0,
+        page: 1,
+        limit: limitNum,
+        totalPages: 0,
+        buyers: [],
+      });
     }
 
     // 4. Fetch lightweight plan tracking info for confirmed/completed orders (NO ARRAYS)
@@ -387,71 +391,139 @@ router.get("/tracking/:dept", async (req, res) => {
     const hasDateFilter = startMin || startMax || endMin || endMax;
     if (hasDateFilter && filteredPlanInfo.length > 0) {
       const filterOrderNos = filteredPlanInfo.map((p) => p.orderNo);
-      
+
       const filterDocs = await OrderDate.find(
         { orderNo: { $in: filterOrderNos } },
-        { orderNo: 1, [dbDept]: 1 }
+        { orderNo: 1, [dbDept]: 1 },
       ).lean();
-      
+
       const filterOrders = await Order.find(
         { orderNo: { $in: filterOrderNos } },
-        { orderNo: 1, [`${dbDept}Items`]: 1, knitStart: 1, knitEnd: 1, dyeStart: 1, dyeEnd: 1, deliStart: 1, deliEnd: 1 }
+        {
+          orderNo: 1,
+          [`${dbDept}Items`]: 1,
+          knitStart: 1,
+          knitEnd: 1,
+          dyeStart: 1,
+          dyeEnd: 1,
+          deliStart: 1,
+          deliEnd: 1,
+        },
       ).lean();
-      
+
       const filterOrdersMap = {};
-      filterOrders.forEach((o) => { filterOrdersMap[o.orderNo] = o; });
+      filterOrders.forEach((o) => {
+        filterOrdersMap[o.orderNo] = o;
+      });
 
       filteredPlanInfo = filteredPlanInfo.filter((plan) => {
         const doc = filterDocs.find((d) => d.orderNo === plan.orderNo);
         const orderInfo = filterOrdersMap[plan.orderNo] || {};
-        const rawItems = (doc && doc[dbDept] && doc[dbDept].length > 0) ? doc[dbDept] : (orderInfo[`${dbDept}Items`] || []);
-        
-        let startDates = [], endDates = [];
+        const rawItems =
+          doc && doc[dbDept] && doc[dbDept].length > 0
+            ? doc[dbDept]
+            : orderInfo[`${dbDept}Items`] || [];
+
+        let startDates = [],
+          endDates = [];
         if (dept === "deliveryfloor") {
           const floorItems = rawItems.filter((item) => {
-             const type = item.floorPlanType || item['Delivery Plan Type (Floor)'] || '';
-             return type === 'Confirm' || type === 'Tentative';
+            const type =
+              item.floorPlanType || item["Delivery Plan Type (Floor)"] || "";
+            return type === "Confirm" || type === "Tentative";
           });
-          startDates = floorItems.map((item) => item.floorStartDate || item['Delivery Plan Start (Floor)'] || '').filter((d) => d && d !== '' && d !== '-');
-          endDates = floorItems.map((item) => item.floorEndDate || item['Delivery Plan End (Floor)'] || '').filter((d) => d && d !== '' && d !== '-');
+          startDates = floorItems
+            .map(
+              (item) =>
+                item.floorStartDate ||
+                item["Delivery Plan Start (Floor)"] ||
+                "",
+            )
+            .filter((d) => d && d !== "" && d !== "-");
+          endDates = floorItems
+            .map(
+              (item) =>
+                item.floorEndDate || item["Delivery Plan End (Floor)"] || "",
+            )
+            .filter((d) => d && d !== "" && d !== "-");
         } else {
-          startDates = rawItems.map((item) => item.startDate || item['Plan Start Date'] || item['Plan Start'] || item['Start Date'] || item['Knit Start Date'] || item['Dyeing Start Date'] || (dbDept === 'delivery' ? item['Delivery Plan Start'] : '') || '').filter((d) => d && d !== '' && d !== '-');
-          endDates = rawItems.map((item) => item.endDate || item['Plan End Date'] || item['Plan End'] || item['End Date'] || item['Knit End Date'] || item['Dyeing End Date'] || (dbDept === 'delivery' ? item['Delivery Plan End'] : '') || '').filter((d) => d && d !== '' && d !== '-');
+          startDates = rawItems
+            .map(
+              (item) =>
+                item.startDate ||
+                item["Plan Start Date"] ||
+                item["Plan Start"] ||
+                item["Start Date"] ||
+                item["Knit Start Date"] ||
+                item["Dyeing Start Date"] ||
+                (dbDept === "delivery" ? item["Delivery Plan Start"] : "") ||
+                "",
+            )
+            .filter((d) => d && d !== "" && d !== "-");
+          endDates = rawItems
+            .map(
+              (item) =>
+                item.endDate ||
+                item["Plan End Date"] ||
+                item["Plan End"] ||
+                item["End Date"] ||
+                item["Knit End Date"] ||
+                item["Dyeing End Date"] ||
+                (dbDept === "delivery" ? item["Delivery Plan End"] : "") ||
+                "",
+            )
+            .filter((d) => d && d !== "" && d !== "-");
         }
 
         if (startDates.length === 0 && endDates.length === 0) {
-            if (dept === 'knitting') {
-                if (orderInfo.knitStart) startDates = [orderInfo.knitStart];
-                if (orderInfo.knitEnd) endDates = [orderInfo.knitEnd];
-            } else if (dept === 'dyeing') {
-                if (orderInfo.dyeStart) startDates = [orderInfo.dyeStart];
-                if (orderInfo.dyeEnd) endDates = [orderInfo.dyeEnd];
-            } else if (dept === 'delivery') {
-                if (orderInfo.deliStart) startDates = [orderInfo.deliStart];
-                if (orderInfo.deliEnd) endDates = [orderInfo.deliEnd];
-            }
+          if (dept === "knitting") {
+            if (orderInfo.knitStart) startDates = [orderInfo.knitStart];
+            if (orderInfo.knitEnd) endDates = [orderInfo.knitEnd];
+          } else if (dept === "dyeing") {
+            if (orderInfo.dyeStart) startDates = [orderInfo.dyeStart];
+            if (orderInfo.dyeEnd) endDates = [orderInfo.dyeEnd];
+          } else if (dept === "delivery") {
+            if (orderInfo.deliStart) startDates = [orderInfo.deliStart];
+            if (orderInfo.deliEnd) endDates = [orderInfo.deliEnd];
+          }
         }
-        
+
         startDates.sort();
         endDates.sort();
-        
-        const pStart = startDates.length > 0 ? startDates[0] : '';
-        const pEnd = endDates.length > 0 ? endDates[endDates.length - 1] : '';
+
+        const pStart = startDates.length > 0 ? startDates[0] : "";
+        const pEnd = endDates.length > 0 ? endDates[endDates.length - 1] : "";
 
         if (startMin && pStart) {
-          if (new Date(pStart).setHours(0,0,0,0) < new Date(startMin).setHours(0,0,0,0)) return false;
+          if (
+            new Date(pStart).setHours(0, 0, 0, 0) <
+            new Date(startMin).setHours(0, 0, 0, 0)
+          )
+            return false;
         } else if (startMin && !pStart) return false;
 
         if (startMax && pStart) {
-          if (new Date(pStart).setHours(0,0,0,0) > new Date(startMax).setHours(0,0,0,0)) return false;
+          if (
+            new Date(pStart).setHours(0, 0, 0, 0) >
+            new Date(startMax).setHours(0, 0, 0, 0)
+          )
+            return false;
         } else if (startMax && !pStart) return false;
 
         if (endMin && pEnd) {
-          if (new Date(pEnd).setHours(0,0,0,0) < new Date(endMin).setHours(0,0,0,0)) return false;
+          if (
+            new Date(pEnd).setHours(0, 0, 0, 0) <
+            new Date(endMin).setHours(0, 0, 0, 0)
+          )
+            return false;
         } else if (endMin && !pEnd) return false;
 
         if (endMax && pEnd) {
-          if (new Date(pEnd).setHours(0,0,0,0) > new Date(endMax).setHours(0,0,0,0)) return false;
+          if (
+            new Date(pEnd).setHours(0, 0, 0, 0) >
+            new Date(endMax).setHours(0, 0, 0, 0)
+          )
+            return false;
         } else if (endMax && !pEnd) return false;
 
         return true;
@@ -515,63 +587,53 @@ router.get("/tracking/:dept", async (req, res) => {
     });
 
     // Fetch uploaded items to populate dates for orders that only exist in Order collection
+    // (i.e., OrderDate has no dept array for them)
     const paginatedOrders = await Order.find(
       { orderNo: { $in: paginatedOrderNos } },
-      { orderNo: 1, [`${dbDept}Items`]: 1, knitStart: 1, knitEnd: 1, dyeStart: 1, dyeEnd: 1, deliStart: 1, deliEnd: 1 }
+      { orderNo: 1, [`${dbDept}Items`]: 1 },
     ).lean();
     const paginatedOrdersMap = {};
-    paginatedOrders.forEach(o => { paginatedOrdersMap[o.orderNo] = o; });
+    paginatedOrders.forEach((o) => {
+      paginatedOrdersMap[o.orderNo] = o[`${dbDept}Items`] || [];
+    });
 
-    paginatedDocs.forEach(doc => {
+    paginatedDocs.forEach((doc) => {
       if (!doc[dbDept] || doc[dbDept].length === 0) {
-        const orderInfo = paginatedOrdersMap[doc.orderNo] || {};
-        const rawItems = orderInfo[`${dbDept}Items`] || [];
-        
-        if (rawItems.length === 0) {
-            let startDate = '', endDate = '';
-            if (dbDept === 'knitting') { startDate = orderInfo.knitStart || ''; endDate = orderInfo.knitEnd || ''; }
-            else if (dbDept === 'dyeing') { startDate = orderInfo.dyeStart || ''; endDate = orderInfo.dyeEnd || ''; }
-            else if (dbDept === 'delivery') { startDate = orderInfo.deliStart || ''; endDate = orderInfo.deliEnd || ''; }
-            
-            if (startDate || endDate) {
-                const dummyItem = { itemData: {}, startDate, endDate };
-                if (dbDept === 'delivery') {
-                    dummyItem.floorStartDate = '';
-                    dummyItem.floorEndDate = '';
-                    dummyItem.floorPlanType = '';
-                }
-                doc[dbDept] = [dummyItem];
-            }
-        } else {
-            doc[dbDept] = rawItems.map(raw => {
-                let startDate = raw['Plan Start Date'] || raw['Plan Start'] || raw['Start Date'] || raw['Knit Start Date'] || raw['Dyeing Start Date'] || '';
-                let endDate = raw['Plan End Date'] || raw['Plan End'] || raw['End Date'] || raw['Knit End Date'] || raw['Dyeing End Date'] || '';
-                
-                if (!startDate && !endDate) {
-                    if (dbDept === 'knitting') { startDate = orderInfo.knitStart || ''; endDate = orderInfo.knitEnd || ''; }
-                    else if (dbDept === 'dyeing') { startDate = orderInfo.dyeStart || ''; endDate = orderInfo.dyeEnd || ''; }
-                    else if (dbDept === 'delivery') { startDate = orderInfo.deliStart || ''; endDate = orderInfo.deliEnd || ''; }
-                }
-                
-                if (dbDept === 'delivery') {
-                    startDate = raw['Delivery Plan Start'] || startDate;
-                    endDate = raw['Delivery Plan End'] || endDate;
-                    return {
-                        itemData: raw,
-                        floorStartDate: raw['Delivery Plan Start (Floor)'] || '',
-                        floorEndDate: raw['Delivery Plan End (Floor)'] || '',
-                        floorPlanType: raw['Delivery Plan Type (Floor)'] || '',
-                        startDate,
-                        endDate
-                    };
-                }
-                return {
-                    itemData: raw,
-                    startDate,
-                    endDate
-                };
-            });
-        }
+        const rawItems = paginatedOrdersMap[doc.orderNo] || [];
+        doc[dbDept] = rawItems.map((raw) => {
+          let startDate =
+            raw["Plan Start Date"] ||
+            raw["Plan Start"] ||
+            raw["Start Date"] ||
+            raw["Knit Start Date"] ||
+            raw["Dyeing Start Date"] ||
+            "";
+          let endDate =
+            raw["Plan End Date"] ||
+            raw["Plan End"] ||
+            raw["End Date"] ||
+            raw["Knit End Date"] ||
+            raw["Dyeing End Date"] ||
+            "";
+
+          if (dbDept === "delivery") {
+            startDate = raw["Delivery Plan Start"] || startDate;
+            endDate = raw["Delivery Plan End"] || endDate;
+            return {
+              itemData: raw,
+              floorStartDate: raw["Delivery Plan Start (Floor)"] || "",
+              floorEndDate: raw["Delivery Plan End (Floor)"] || "",
+              floorPlanType: raw["Delivery Plan Type (Floor)"] || "",
+              startDate,
+              endDate,
+            };
+          }
+          return {
+            itemData: raw,
+            startDate,
+            endDate,
+          };
+        });
       }
     });
 
@@ -815,7 +877,12 @@ router.get("/report-download/:dept", async (req, res) => {
     };
 
     // 1. Get minimal order info
-    const orders = await Order.find(filter, { orderNo: 1, buyer: 1, 'T&A Knitting Start': 1, 'T&A Knitting End': 1 }).lean();
+    const orders = await Order.find(filter, {
+      orderNo: 1,
+      buyer: 1,
+      "T&A Knitting Start": 1,
+      "T&A Knitting End": 1,
+    }).lean();
     const orderNos = orders.map((o) => o.orderNo);
 
     if (orderNos.length === 0) {
@@ -827,8 +894,8 @@ router.get("/report-download/:dept", async (req, res) => {
     orders.forEach((o) => {
       orderBuyerMap[o.orderNo] = o.buyer;
       orderInfoMap[o.orderNo] = {
-        knitStart: o['T&A Knitting Start'] || '',
-        knitEnd: o['T&A Knitting End'] || ''
+        knitStart: o["T&A Knitting Start"] || "",
+        knitEnd: o["T&A Knitting End"] || "",
       };
     });
 
@@ -1019,19 +1086,32 @@ router.get("/report-download/:dept", async (req, res) => {
               row["Floor End Date"] = item.floorEndDate || "";
               row["Floor Plan Type"] = item.floorPlanType || "";
 
-              let knitStart = "", knitEnd = "";
-              
-              if (plan.knitting && Array.isArray(plan.knitting) && plan.knitting.length > 0) {
+              let knitStart = "",
+                knitEnd = "";
+
+              if (
+                plan.knitting &&
+                Array.isArray(plan.knitting) &&
+                plan.knitting.length > 0
+              ) {
                 const kItem = plan.knitting[0];
                 knitStart = kItem.startDate || "";
                 knitEnd = kItem.endDate || "";
               } else if (orderInfoMap[plan.orderNo]) {
-                let parsedKnitStart = orderInfoMap[plan.orderNo].knitStart !== 'N/A' && orderInfoMap[plan.orderNo].knitStart !== '-' ? orderInfoMap[plan.orderNo].knitStart : '';
-                let parsedKnitEnd = orderInfoMap[plan.orderNo].knitEnd !== 'N/A' && orderInfoMap[plan.orderNo].knitEnd !== '-' ? orderInfoMap[plan.orderNo].knitEnd : '';
+                let parsedKnitStart =
+                  orderInfoMap[plan.orderNo].knitStart !== "N/A" &&
+                  orderInfoMap[plan.orderNo].knitStart !== "-"
+                    ? orderInfoMap[plan.orderNo].knitStart
+                    : "";
+                let parsedKnitEnd =
+                  orderInfoMap[plan.orderNo].knitEnd !== "N/A" &&
+                  orderInfoMap[plan.orderNo].knitEnd !== "-"
+                    ? orderInfoMap[plan.orderNo].knitEnd
+                    : "";
                 knitStart = parsedKnitStart;
                 knitEnd = parsedKnitEnd;
               }
-              
+
               row["Knit Start Date"] = knitStart;
               row["Knit End Date"] = knitEnd;
             }
@@ -1243,9 +1323,9 @@ router.get("/tracking-download/:dept", async (req, res) => {
         planDocSet.add(doc.orderNo);
       }
     });
-    
+
     // Ensure confirmed orderNos have a doc in planDocs (so they get processed)
-    orderNos.forEach(orderNo => {
+    orderNos.forEach((orderNo) => {
       if (!planDocSet.has(orderNo)) {
         planDocs.push({ orderNo, [dbDept]: [] });
         planDocSet.add(orderNo);
@@ -1253,38 +1333,52 @@ router.get("/tracking-download/:dept", async (req, res) => {
     });
 
     // Fetch uploaded items to populate dates for orders that only exist in Order collection
-    const trackingOrderNos = planDocs.map(p => p.orderNo);
+    const trackingOrderNos = planDocs.map((p) => p.orderNo);
     const trackingOrders = await Order.find(
       { orderNo: { $in: trackingOrderNos } },
-      { orderNo: 1, [`${dbDept}Items`]: 1 }
+      { orderNo: 1, [`${dbDept}Items`]: 1 },
     ).lean();
     const trackingOrdersMap = {};
-    trackingOrders.forEach(o => { trackingOrdersMap[o.orderNo] = o[`${dbDept}Items`] || []; });
+    trackingOrders.forEach((o) => {
+      trackingOrdersMap[o.orderNo] = o[`${dbDept}Items`] || [];
+    });
 
-    planDocs.forEach(doc => {
+    planDocs.forEach((doc) => {
       if (!doc[dbDept] || doc[dbDept].length === 0) {
         const rawItems = trackingOrdersMap[doc.orderNo] || [];
-        doc[dbDept] = rawItems.map(raw => {
-            let startDate = raw['Plan Start Date'] || raw['Plan Start'] || raw['Start Date'] || raw['Knit Start Date'] || raw['Dyeing Start Date'] || '';
-            let endDate = raw['Plan End Date'] || raw['Plan End'] || raw['End Date'] || raw['Knit End Date'] || raw['Dyeing End Date'] || '';
-            
-            if (dbDept === 'delivery') {
-                startDate = raw['Delivery Plan Start'] || startDate;
-                endDate = raw['Delivery Plan End'] || endDate;
-                return {
-                    itemData: raw,
-                    floorStartDate: raw['Delivery Plan Start (Floor)'] || '',
-                    floorEndDate: raw['Delivery Plan End (Floor)'] || '',
-                    floorPlanType: raw['Delivery Plan Type (Floor)'] || '',
-                    startDate,
-                    endDate
-                };
-            }
+        doc[dbDept] = rawItems.map((raw) => {
+          let startDate =
+            raw["Plan Start Date"] ||
+            raw["Plan Start"] ||
+            raw["Start Date"] ||
+            raw["Knit Start Date"] ||
+            raw["Dyeing Start Date"] ||
+            "";
+          let endDate =
+            raw["Plan End Date"] ||
+            raw["Plan End"] ||
+            raw["End Date"] ||
+            raw["Knit End Date"] ||
+            raw["Dyeing End Date"] ||
+            "";
+
+          if (dbDept === "delivery") {
+            startDate = raw["Delivery Plan Start"] || startDate;
+            endDate = raw["Delivery Plan End"] || endDate;
             return {
-                itemData: raw,
-                startDate,
-                endDate
+              itemData: raw,
+              floorStartDate: raw["Delivery Plan Start (Floor)"] || "",
+              floorEndDate: raw["Delivery Plan End (Floor)"] || "",
+              floorPlanType: raw["Delivery Plan Type (Floor)"] || "",
+              startDate,
+              endDate,
             };
+          }
+          return {
+            itemData: raw,
+            startDate,
+            endDate,
+          };
         });
       }
     });
