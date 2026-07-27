@@ -897,6 +897,13 @@ router.get("/report-download/:dept", async (req, res) => {
             row["Plan Start Date"] = item.startDate || "";
             row["Plan End Date"] = item.endDate || "";
             row["Plan Type"] = item.planType || "";
+            if (dept === "yd") {
+              row["Yarn Ok Date"] = item.yarnOkDate || "";
+              row["Matching Option Date"] = item.matchingOptionDate || "";
+              row["Floor Start Date"] = item.floorStartDate || "";
+              row["Floor End Date"] = item.floorEndDate || "";
+              row["Floor Plan Type"] = item.floorPlanType || "";
+            }
             row["Limitation"] = item.limitation || "";
             row["Remarks"] = item.remarks || "";
           }
