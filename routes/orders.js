@@ -526,34 +526,52 @@ router.get("/tracking/:dept", async (req, res) => {
       if (!doc[dbDept] || doc[dbDept].length === 0) {
         const orderInfo = paginatedOrdersMap[doc.orderNo] || {};
         const rawItems = orderInfo[`${dbDept}Items`] || [];
-        doc[dbDept] = rawItems.map(raw => {
-            let startDate = raw['Plan Start Date'] || raw['Plan Start'] || raw['Start Date'] || raw['Knit Start Date'] || raw['Dyeing Start Date'] || '';
-            let endDate = raw['Plan End Date'] || raw['Plan End'] || raw['End Date'] || raw['Knit End Date'] || raw['Dyeing End Date'] || '';
+        
+        if (rawItems.length === 0) {
+            let startDate = '', endDate = '';
+            if (dbDept === 'knitting') { startDate = orderInfo.knitStart || ''; endDate = orderInfo.knitEnd || ''; }
+            else if (dbDept === 'dyeing') { startDate = orderInfo.dyeStart || ''; endDate = orderInfo.dyeEnd || ''; }
+            else if (dbDept === 'delivery') { startDate = orderInfo.deliStart || ''; endDate = orderInfo.deliEnd || ''; }
             
-            if (!startDate && !endDate) {
-                if (dbDept === 'knitting') { startDate = orderInfo.knitStart || ''; endDate = orderInfo.knitEnd || ''; }
-                else if (dbDept === 'dyeing') { startDate = orderInfo.dyeStart || ''; endDate = orderInfo.dyeEnd || ''; }
-                else if (dbDept === 'delivery') { startDate = orderInfo.deliStart || ''; endDate = orderInfo.deliEnd || ''; }
+            if (startDate || endDate) {
+                const dummyItem = { itemData: {}, startDate, endDate };
+                if (dbDept === 'delivery') {
+                    dummyItem.floorStartDate = '';
+                    dummyItem.floorEndDate = '';
+                    dummyItem.floorPlanType = '';
+                }
+                doc[dbDept] = [dummyItem];
             }
-            
-            if (dbDept === 'delivery') {
-                startDate = raw['Delivery Plan Start'] || startDate;
-                endDate = raw['Delivery Plan End'] || endDate;
+        } else {
+            doc[dbDept] = rawItems.map(raw => {
+                let startDate = raw['Plan Start Date'] || raw['Plan Start'] || raw['Start Date'] || raw['Knit Start Date'] || raw['Dyeing Start Date'] || '';
+                let endDate = raw['Plan End Date'] || raw['Plan End'] || raw['End Date'] || raw['Knit End Date'] || raw['Dyeing End Date'] || '';
+                
+                if (!startDate && !endDate) {
+                    if (dbDept === 'knitting') { startDate = orderInfo.knitStart || ''; endDate = orderInfo.knitEnd || ''; }
+                    else if (dbDept === 'dyeing') { startDate = orderInfo.dyeStart || ''; endDate = orderInfo.dyeEnd || ''; }
+                    else if (dbDept === 'delivery') { startDate = orderInfo.deliStart || ''; endDate = orderInfo.deliEnd || ''; }
+                }
+                
+                if (dbDept === 'delivery') {
+                    startDate = raw['Delivery Plan Start'] || startDate;
+                    endDate = raw['Delivery Plan End'] || endDate;
+                    return {
+                        itemData: raw,
+                        floorStartDate: raw['Delivery Plan Start (Floor)'] || '',
+                        floorEndDate: raw['Delivery Plan End (Floor)'] || '',
+                        floorPlanType: raw['Delivery Plan Type (Floor)'] || '',
+                        startDate,
+                        endDate
+                    };
+                }
                 return {
                     itemData: raw,
-                    floorStartDate: raw['Delivery Plan Start (Floor)'] || '',
-                    floorEndDate: raw['Delivery Plan End (Floor)'] || '',
-                    floorPlanType: raw['Delivery Plan Type (Floor)'] || '',
                     startDate,
                     endDate
                 };
-            }
-            return {
-                itemData: raw,
-                startDate,
-                endDate
-            };
-        });
+            });
+        }
       }
     });
 
