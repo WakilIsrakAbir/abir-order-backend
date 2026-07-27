@@ -728,6 +728,8 @@ router.get("/report-download/:dept", async (req, res) => {
     if (dept === "delivery") {
       planProjection.knitting = 1;
       planProjection.dyeing = 1;
+    } else if (dept === "yd") {
+      planProjection.knitting = 1;
     }
 
     let allRows = [];
