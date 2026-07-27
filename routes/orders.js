@@ -712,7 +712,7 @@ router.get("/report-download/:dept", async (req, res) => {
     };
 
     // 1. Get minimal order info
-    const orders = await Order.find(filter, { orderNo: 1, buyer: 1 }).lean();
+    const orders = await Order.find(filter, { orderNo: 1, buyer: 1, 'T&A Knitting Start': 1, 'T&A Knitting End': 1 }).lean();
     const orderNos = orders.map((o) => o.orderNo);
 
     if (orderNos.length === 0) {
@@ -720,8 +720,13 @@ router.get("/report-download/:dept", async (req, res) => {
     }
 
     const orderBuyerMap = {};
+    const orderInfoMap = {};
     orders.forEach((o) => {
       orderBuyerMap[o.orderNo] = o.buyer;
+      orderInfoMap[o.orderNo] = {
+        knitStart: o['T&A Knitting Start'] || '',
+        knitEnd: o['T&A Knitting End'] || ''
+      };
     });
 
     let planProjection = { orderNo: 1, [dept]: 1 };
@@ -912,22 +917,18 @@ router.get("/report-download/:dept", async (req, res) => {
               row["Floor Plan Type"] = item.floorPlanType || "";
 
               let knitStart = "", knitEnd = "";
-              const myColor = String(row.Color || "").trim().toLowerCase();
-              const myConst = String(row.FabricConstruction || "").trim().toLowerCase();
-              const myGSM = String(row.GSM || "").trim().toLowerCase();
-
-              if (plan.knitting && Array.isArray(plan.knitting)) {
-                const kItem = plan.knitting.find((k) =>
-                  k.itemData &&
-                  String(k.itemData.Color || "").trim().toLowerCase() === myColor &&
-                  String(k.itemData.FabricConstruction || "").trim().toLowerCase() === myConst &&
-                  String(k.itemData.GSM || "").trim().toLowerCase() === myGSM
-                );
-                if (kItem) {
-                  knitStart = kItem.startDate || "";
-                  knitEnd = kItem.endDate || "";
-                }
+              
+              if (plan.knitting && Array.isArray(plan.knitting) && plan.knitting.length > 0) {
+                const kItem = plan.knitting[0];
+                knitStart = kItem.startDate || "";
+                knitEnd = kItem.endDate || "";
+              } else if (orderInfoMap[plan.orderNo]) {
+                let parsedKnitStart = orderInfoMap[plan.orderNo].knitStart !== 'N/A' && orderInfoMap[plan.orderNo].knitStart !== '-' ? orderInfoMap[plan.orderNo].knitStart : '';
+                let parsedKnitEnd = orderInfoMap[plan.orderNo].knitEnd !== 'N/A' && orderInfoMap[plan.orderNo].knitEnd !== '-' ? orderInfoMap[plan.orderNo].knitEnd : '';
+                knitStart = parsedKnitStart;
+                knitEnd = parsedKnitEnd;
               }
+              
               row["Knit Start Date"] = knitStart;
               row["Knit End Date"] = knitEnd;
             }
