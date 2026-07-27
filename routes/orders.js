@@ -395,15 +395,16 @@ router.get("/tracking/:dept", async (req, res) => {
       
       const filterOrders = await Order.find(
         { orderNo: { $in: filterOrderNos } },
-        { orderNo: 1, [`${dbDept}Items`]: 1 }
+        { orderNo: 1, [`${dbDept}Items`]: 1, knitStart: 1, knitEnd: 1, dyeStart: 1, dyeEnd: 1, deliStart: 1, deliEnd: 1 }
       ).lean();
       
       const filterOrdersMap = {};
-      filterOrders.forEach((o) => { filterOrdersMap[o.orderNo] = o[`${dbDept}Items`] || []; });
+      filterOrders.forEach((o) => { filterOrdersMap[o.orderNo] = o; });
 
       filteredPlanInfo = filteredPlanInfo.filter((plan) => {
         const doc = filterDocs.find((d) => d.orderNo === plan.orderNo);
-        const rawItems = (doc && doc[dbDept] && doc[dbDept].length > 0) ? doc[dbDept] : (filterOrdersMap[plan.orderNo] || []);
+        const orderInfo = filterOrdersMap[plan.orderNo] || {};
+        const rawItems = (doc && doc[dbDept] && doc[dbDept].length > 0) ? doc[dbDept] : (orderInfo[`${dbDept}Items`] || []);
         
         let startDates = [], endDates = [];
         if (dept === "deliveryfloor") {
@@ -416,6 +417,19 @@ router.get("/tracking/:dept", async (req, res) => {
         } else {
           startDates = rawItems.map((item) => item.startDate || item['Plan Start Date'] || item['Plan Start'] || item['Start Date'] || item['Knit Start Date'] || item['Dyeing Start Date'] || (dbDept === 'delivery' ? item['Delivery Plan Start'] : '') || '').filter((d) => d && d !== '' && d !== '-');
           endDates = rawItems.map((item) => item.endDate || item['Plan End Date'] || item['Plan End'] || item['End Date'] || item['Knit End Date'] || item['Dyeing End Date'] || (dbDept === 'delivery' ? item['Delivery Plan End'] : '') || '').filter((d) => d && d !== '' && d !== '-');
+        }
+
+        if (startDates.length === 0 && endDates.length === 0) {
+            if (dept === 'knitting') {
+                if (orderInfo.knitStart) startDates = [orderInfo.knitStart];
+                if (orderInfo.knitEnd) endDates = [orderInfo.knitEnd];
+            } else if (dept === 'dyeing') {
+                if (orderInfo.dyeStart) startDates = [orderInfo.dyeStart];
+                if (orderInfo.dyeEnd) endDates = [orderInfo.dyeEnd];
+            } else if (dept === 'delivery') {
+                if (orderInfo.deliStart) startDates = [orderInfo.deliStart];
+                if (orderInfo.deliEnd) endDates = [orderInfo.deliEnd];
+            }
         }
         
         startDates.sort();
@@ -503,17 +517,24 @@ router.get("/tracking/:dept", async (req, res) => {
     // Fetch uploaded items to populate dates for orders that only exist in Order collection
     const paginatedOrders = await Order.find(
       { orderNo: { $in: paginatedOrderNos } },
-      { orderNo: 1, [`${dbDept}Items`]: 1 }
+      { orderNo: 1, [`${dbDept}Items`]: 1, knitStart: 1, knitEnd: 1, dyeStart: 1, dyeEnd: 1, deliStart: 1, deliEnd: 1 }
     ).lean();
     const paginatedOrdersMap = {};
-    paginatedOrders.forEach(o => { paginatedOrdersMap[o.orderNo] = o[`${dbDept}Items`] || []; });
+    paginatedOrders.forEach(o => { paginatedOrdersMap[o.orderNo] = o; });
 
     paginatedDocs.forEach(doc => {
       if (!doc[dbDept] || doc[dbDept].length === 0) {
-        const rawItems = paginatedOrdersMap[doc.orderNo] || [];
+        const orderInfo = paginatedOrdersMap[doc.orderNo] || {};
+        const rawItems = orderInfo[`${dbDept}Items`] || [];
         doc[dbDept] = rawItems.map(raw => {
             let startDate = raw['Plan Start Date'] || raw['Plan Start'] || raw['Start Date'] || raw['Knit Start Date'] || raw['Dyeing Start Date'] || '';
             let endDate = raw['Plan End Date'] || raw['Plan End'] || raw['End Date'] || raw['Knit End Date'] || raw['Dyeing End Date'] || '';
+            
+            if (!startDate && !endDate) {
+                if (dbDept === 'knitting') { startDate = orderInfo.knitStart || ''; endDate = orderInfo.knitEnd || ''; }
+                else if (dbDept === 'dyeing') { startDate = orderInfo.dyeStart || ''; endDate = orderInfo.dyeEnd || ''; }
+                else if (dbDept === 'delivery') { startDate = orderInfo.deliStart || ''; endDate = orderInfo.deliEnd || ''; }
+            }
             
             if (dbDept === 'delivery') {
                 startDate = raw['Delivery Plan Start'] || startDate;
