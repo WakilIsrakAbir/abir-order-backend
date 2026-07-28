@@ -4,8 +4,29 @@ const Order = require("../models/Order");
 const OrderDate = require("../models/OrderDate");
 
 // ==========================================================
-// ORDERS API: Fast paginated endpoints for frontend
+// GET /api/orders/buyers — Fetch all unique buyer names
 // ==========================================================
+router.get("/buyers", async (req, res) => {
+  try {
+    const rawBuyers = await Order.distinct("buyer");
+    const buyers = rawBuyers
+      .map((b) => (b ? String(b).trim() : ""))
+      .filter(
+        (b) =>
+          b &&
+          b.toUpperCase() !== "UNDEFINED" &&
+          b.toUpperCase() !== "N/A" &&
+          b.toUpperCase() !== "GENERAL",
+      );
+    // Sort buyers alphabetically
+    buyers.sort((a, b) => a.localeCompare(b));
+    res.json(buyers);
+  } catch (error) {
+    console.error("Error fetching buyers:", error);
+    res.status(500).json({ message: "Failed to fetch buyers." });
+  }
+});
+
 
 // ==========================================
 // GET /api/orders/all-list — All orders (for Order Status page)
