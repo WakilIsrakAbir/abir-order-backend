@@ -170,6 +170,18 @@ router.get("/", async (req, res) => {
       requiredQtyKgs: 1,
       [`${dept}PlanStatus`]: 1,
     };
+    
+    if (req.query.populateItems === "true") {
+      projection[`${dept}Items`] = 1;
+      projection.knitStart = 1;
+      projection.knitEnd = 1;
+      projection.dyeStart = 1;
+      projection.dyeEnd = 1;
+      projection.deliStart = 1;
+      projection.deliEnd = 1;
+      projection.ydStart = 1;
+      projection.ydEnd = 1;
+    }
 
     const [orders, total] = await Promise.all([
       Order.find(filter, projection)
