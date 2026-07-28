@@ -27,6 +27,33 @@ router.get("/buyers", async (req, res) => {
   }
 });
 
+// Middleware to process allowed buyers globally for all subsequent GET requests
+router.use(async (req, res, next) => {
+  if (req.method === "GET" && req.query.allowedBuyers) {
+    if (req.query.allowedBuyers === "NONE_ASSIGNED") {
+      req.allowedRawBuyers = ["_NONE_"];
+    } else {
+      const ids = req.query.allowedBuyers.split(",").filter((x) => x.trim());
+      if (ids.length > 0) {
+        try {
+          const rawBuyers = await Order.distinct("buyer");
+          const allowedNames = rawBuyers.filter((b) => {
+            const id = String(b)
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, "");
+            return ids.includes(id);
+          });
+          req.allowedRawBuyers =
+            allowedNames.length > 0 ? allowedNames : ["_NONE_"];
+        } catch (e) {
+          console.error("Error processing allowedBuyers in middleware", e);
+        }
+      }
+    }
+  }
+  next();
+});
+
 
 // ==========================================
 // GET /api/orders/all-list — All orders (for Order Status page)
@@ -40,6 +67,10 @@ router.get("/all-list", async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const filter = {};
+    if (req.allowedRawBuyers) {
+      filter.buyer = { $in: req.allowedRawBuyers };
+    }
+    
     if (search) {
       filter.$or = [
         { orderNo: { $regex: search, $options: "i" } },
@@ -104,6 +135,16 @@ router.get("/", async (req, res) => {
     // Buyer filter
     if (buyer) {
       filter.buyer = { $regex: buyer, $options: "i" };
+    }
+
+    if (req.allowedRawBuyers) {
+      if (filter.buyer) {
+        filter.$and = filter.$and || [];
+        filter.$and.push({ buyer: filter.buyer });
+        filter.buyer = { $in: req.allowedRawBuyers };
+      } else {
+        filter.buyer = { $in: req.allowedRawBuyers };
+      }
     }
 
     // Search by orderNo
@@ -175,7 +216,9 @@ router.get("/:orderNo", async (req, res) => {
     const { dept = "knitting" } = req.query;
 
     // Get order data
-    const order = await Order.findOne({ orderNo }).lean();
+    const filter = { orderNo };
+    if (req.allowedRawBuyers) filter.buyer = { $in: req.allowedRawBuyers };
+    const order = await Order.findOne(filter).lean();
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
@@ -201,9 +244,9 @@ router.get("/buyers/:dept", async (req, res) => {
     const { dept } = req.params;
     const itemsField = `${dept}Items`;
 
-    const buyers = await Order.distinct("buyer", {
-      [itemsField]: { $exists: true, $ne: [] },
-    });
+    const filter = { [itemsField]: { $exists: true, $ne: [] } };
+    if (req.allowedRawBuyers) filter.buyer = { $in: req.allowedRawBuyers };
+    const buyers = await Order.distinct("buyer", filter);
 
     res
       .status(200)
@@ -229,6 +272,7 @@ router.get("/report/:dept", async (req, res) => {
       [statusField]: { $in: ["Confirm", "Tentative"] },
       [itemsField]: { $exists: true, $ne: [] },
     };
+    if (req.allowedRawBuyers) filter.buyer = { $in: req.allowedRawBuyers };
 
     // No limit — fetch ALL confirmed/tentative orders for report
     const orders = await Order.find(filter).sort({ orderNo: -1 }).lean();
@@ -290,6 +334,14 @@ router.get("/tracking/:dept", async (req, res) => {
     if (buyer) orderFilter.buyer = { $regex: buyer, $options: "i" };
     if (search) orderFilter.orderNo = { $regex: search, $options: "i" };
 
+    if (req.allowedRawBuyers) {
+      if (orderFilter.buyer) {
+        orderFilter.$and = orderFilter.$and || [];
+        orderFilter.$and.push({ buyer: orderFilter.buyer });
+      }
+      orderFilter.buyer = { $in: req.allowedRawBuyers };
+    }
+
     const confirmedOrders = await Order.find(orderFilter, {
       orderNo: 1,
       buyer: 1,
@@ -334,6 +386,15 @@ router.get("/tracking/:dept", async (req, res) => {
     if (orphanedOrderNos.length > 0) {
       const orphanOrderFilter = { orderNo: { $in: orphanedOrderNos } };
       if (buyer) orphanOrderFilter.buyer = { $regex: buyer, $options: "i" };
+      
+      if (req.allowedRawBuyers) {
+        if (orphanOrderFilter.buyer) {
+          orphanOrderFilter.$and = orphanOrderFilter.$and || [];
+          orphanOrderFilter.$and.push({ buyer: orphanOrderFilter.buyer });
+        }
+        orphanOrderFilter.buyer = { $in: req.allowedRawBuyers };
+      }
+      
       orphanedOrderInfos = await Order.find(orphanOrderFilter, {
         orderNo: 1,
         buyer: 1,
@@ -343,7 +404,7 @@ router.get("/tracking/:dept", async (req, res) => {
 
     // If buyer filter active, only keep orphaned docs with matching Order buyer
     let filteredOrphanedDocs = orphanedDocs;
-    if (buyer) {
+    if (buyer || req.allowedRawBuyers) {
       const orphanedWithBuyer = new Set(
         orphanedOrderInfos.map((o) => o.orderNo),
       );
@@ -896,6 +957,7 @@ router.get("/report-download/:dept", async (req, res) => {
     const filter = {
       [statusField]: { $in: statusList },
     };
+    if (req.allowedRawBuyers) filter.buyer = { $in: req.allowedRawBuyers };
 
     // 1. Get minimal order info
     const orders = await Order.find(filter, {
@@ -1289,8 +1351,10 @@ router.get("/tracking-download/:dept", async (req, res) => {
     const actualKey = (dept === "deliveryfloor" ? "delivery" : dept) + "Actual";
 
     // Get confirmed orders only
+    const orderFilter = { [statusField]: "Confirm" };
+    if (req.allowedRawBuyers) orderFilter.buyer = { $in: req.allowedRawBuyers };
     const confirmedOrders = await Order.find(
-      { [statusField]: "Confirm" },
+      orderFilter,
       { orderNo: 1, buyer: 1, bookingDate: 1 },
     ).lean();
 
@@ -1318,8 +1382,10 @@ router.get("/tracking-download/:dept", async (req, res) => {
     // Get Order info for orphaned orders
     const orphanedOrderNos = orphanedDocs.map((d) => d.orderNo);
     if (orphanedOrderNos.length > 0) {
+      const orphanOrderFilter = { orderNo: { $in: orphanedOrderNos } };
+      if (req.allowedRawBuyers) orphanOrderFilter.buyer = { $in: req.allowedRawBuyers };
       const orphanedOrderInfos = await Order.find(
-        { orderNo: { $in: orphanedOrderNos } },
+        orphanOrderFilter,
         { orderNo: 1, buyer: 1, bookingDate: 1 },
       ).lean();
       orphanedOrderInfos.forEach((o) => {
@@ -1339,6 +1405,7 @@ router.get("/tracking-download/:dept", async (req, res) => {
     // Add orphaned docs to planDocs
     const planDocSet = new Set(planDocs.map((p) => p.orderNo));
     orphanedDocs.forEach((doc) => {
+      if (req.allowedRawBuyers && !orderMap[doc.orderNo]) return; // Skip orphans belonging to unallowed buyers
       if (!planDocSet.has(doc.orderNo)) {
         planDocs.push(doc);
         planDocSet.add(doc.orderNo);
