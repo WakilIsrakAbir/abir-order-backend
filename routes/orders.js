@@ -264,8 +264,8 @@ router.get("/tracking/:dept", async (req, res) => {
     const actualField =
       (dept === "deliveryfloor" ? "delivery" : dept) + "Actual";
 
-    // 1. Get Confirmed + Completed orders from Order collection (LIGHTWEIGHT)
-    const orderFilter = { [statusField]: { $in: ["Confirm", "Completed"] } };
+    // 1. Get Confirmed orders from Order collection (LIGHTWEIGHT)
+    const orderFilter = { [statusField]: "Confirm" };
     if (buyer) orderFilter.buyer = { $regex: buyer, $options: "i" };
     if (search) orderFilter.orderNo = { $regex: search, $options: "i" };
 
@@ -294,7 +294,7 @@ router.get("/tracking/:dept", async (req, res) => {
     const orphanFilter = {
       $and: orphanMatch,
       $or: [
-        { [`${dbDept}Status`]: { $in: ["Confirm", "Completed"] } },
+        { [`${dbDept}Status`]: "Confirm" },
         { [`${actualField}.actualStart`]: { $exists: true, $ne: "" } },
         { [`${actualField}.actualEnd`]: { $exists: true, $ne: "" } },
         { [`${actualField}.failReason`]: { $exists: true, $ne: "" } },
@@ -541,7 +541,7 @@ router.get("/tracking/:dept", async (req, res) => {
 
     // 7. Get all buyers for filter tabs (include all sources)
     const buyerFilterQuery = {
-      [statusField]: { $in: ["Confirm", "Completed"] },
+      [statusField]: "Confirm",
     };
     const allBuyersList = await Order.distinct("buyer", buyerFilterQuery);
     // Also include buyers from orphaned orders
@@ -1267,9 +1267,9 @@ router.get("/tracking-download/:dept", async (req, res) => {
     const statusField = `${dbDept}PlanStatus`;
     const actualKey = (dept === "deliveryfloor" ? "delivery" : dept) + "Actual";
 
-    // Get confirmed + completed orders
+    // Get confirmed orders only
     const confirmedOrders = await Order.find(
-      { [statusField]: { $in: ["Confirm", "Completed"] } },
+      { [statusField]: "Confirm" },
       { orderNo: 1, buyer: 1, bookingDate: 1 },
     ).lean();
 
@@ -1284,7 +1284,7 @@ router.get("/tracking-download/:dept", async (req, res) => {
       {
         orderNo: { $nin: orderNos },
         $or: [
-          { [`${dbDept}Status`]: { $in: ["Confirm", "Completed"] } },
+          { [`${dbDept}Status`]: "Confirm" },
           { [`${actualKey}.actualStart`]: { $exists: true, $ne: "" } },
           { [`${actualKey}.actualEnd`]: { $exists: true, $ne: "" } },
           { [`${actualKey}.failReason`]: { $exists: true, $ne: "" } },
