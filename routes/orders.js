@@ -54,7 +54,6 @@ router.use(async (req, res, next) => {
   next();
 });
 
-
 // ==========================================
 // GET /api/orders/all-list — All orders (for Order Status page)
 // No department filter, returns all orders with pagination + search
@@ -70,7 +69,7 @@ router.get("/all-list", async (req, res) => {
     if (req.allowedRawBuyers) {
       filter.buyer = { $in: req.allowedRawBuyers };
     }
-    
+
     if (search) {
       filter.$or = [
         { orderNo: { $regex: search, $options: "i" } },
@@ -170,7 +169,7 @@ router.get("/", async (req, res) => {
       requiredQtyKgs: 1,
       [`${dept}PlanStatus`]: 1,
     };
-    
+
     if (req.query.populateItems === "true") {
       projection[`${dept}Items`] = 1;
       projection.knitStart = 1;
@@ -398,7 +397,7 @@ router.get("/tracking/:dept", async (req, res) => {
     if (orphanedOrderNos.length > 0) {
       const orphanOrderFilter = { orderNo: { $in: orphanedOrderNos } };
       if (buyer) orphanOrderFilter.buyer = { $regex: buyer, $options: "i" };
-      
+
       if (req.allowedRawBuyers) {
         if (orphanOrderFilter.buyer) {
           orphanOrderFilter.$and = orphanOrderFilter.$and || [];
@@ -406,7 +405,7 @@ router.get("/tracking/:dept", async (req, res) => {
         }
         orphanOrderFilter.buyer = { $in: req.allowedRawBuyers };
       }
-      
+
       orphanedOrderInfos = await Order.find(orphanOrderFilter, {
         orderNo: 1,
         buyer: 1,
@@ -1365,10 +1364,11 @@ router.get("/tracking-download/:dept", async (req, res) => {
     // Get confirmed orders only
     const orderFilter = { [statusField]: "Confirm" };
     if (req.allowedRawBuyers) orderFilter.buyer = { $in: req.allowedRawBuyers };
-    const confirmedOrders = await Order.find(
-      orderFilter,
-      { orderNo: 1, buyer: 1, bookingDate: 1 },
-    ).lean();
+    const confirmedOrders = await Order.find(orderFilter, {
+      orderNo: 1,
+      buyer: 1,
+      bookingDate: 1,
+    }).lean();
 
     const orderNos = confirmedOrders.map((o) => o.orderNo);
     const orderMap = {};
@@ -1395,11 +1395,13 @@ router.get("/tracking-download/:dept", async (req, res) => {
     const orphanedOrderNos = orphanedDocs.map((d) => d.orderNo);
     if (orphanedOrderNos.length > 0) {
       const orphanOrderFilter = { orderNo: { $in: orphanedOrderNos } };
-      if (req.allowedRawBuyers) orphanOrderFilter.buyer = { $in: req.allowedRawBuyers };
-      const orphanedOrderInfos = await Order.find(
-        orphanOrderFilter,
-        { orderNo: 1, buyer: 1, bookingDate: 1 },
-      ).lean();
+      if (req.allowedRawBuyers)
+        orphanOrderFilter.buyer = { $in: req.allowedRawBuyers };
+      const orphanedOrderInfos = await Order.find(orphanOrderFilter, {
+        orderNo: 1,
+        buyer: 1,
+        bookingDate: 1,
+      }).lean();
       orphanedOrderInfos.forEach((o) => {
         if (!orderMap[o.orderNo]) orderMap[o.orderNo] = o;
       });
