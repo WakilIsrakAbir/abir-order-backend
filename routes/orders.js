@@ -1225,12 +1225,25 @@ router.get("/report-download/:dept", async (req, res) => {
       for (let i = 0; i < pendingOrderNos.length; i += chunkSize) {
         const chunkNos = pendingOrderNos.slice(i, i + chunkSize);
 
-        const pendingItemsDocs = await Order.find(
-          { orderNo: { $in: chunkNos } },
-          { orderNo: 1, buyer: 1, [`${dept}Items`]: 1 },
-        ).lean();
+        const [pendingItemsDocs, pendingPlanDocs] = await Promise.all([
+          Order.find(
+            { orderNo: { $in: chunkNos } },
+            { orderNo: 1, buyer: 1, [`${dept}Items`]: 1 },
+          ).lean(),
+          OrderDate.find(
+            { orderNo: { $in: chunkNos } },
+            { orderNo: 1, knitting: 1, dyeing: 1 }
+          ).lean()
+        ]);
+
+        const pendingPlanMap = {};
+        pendingPlanDocs.forEach((p) => {
+          pendingPlanMap[p.orderNo] = p;
+        });
 
         pendingItemsDocs.forEach((orderDoc) => {
+          const plan = pendingPlanMap[orderDoc.orderNo] || {};
+
           if (orderDoc[`${dept}Items`]) {
             orderDoc[`${dept}Items`].forEach((itemData) => {
               let row = normalizeItemRow(itemData, dept);
@@ -1238,12 +1251,48 @@ router.get("/report-download/:dept", async (req, res) => {
               if (!row["Buyer"])
                 row["Buyer"] =
                   orderDoc.buyer || orderBuyerMap[orderDoc.orderNo] || "";
-              row["Knit Start Date"] = "";
-              row["Knit End Date"] = "";
-              row["Knit Plan Type"] = "";
-              row["Dyeing Start Date"] = "";
-              row["Dyeing End Date"] = "";
-              row["Dyeing Plan Type"] = "";
+
+              let knitStart = "", knitEnd = "", knitType = "";
+              let dyeStart = "", dyeEnd = "", dyeType = "";
+
+              const myColor = String(row.Color || "").trim().toLowerCase();
+              const myConst = String(row.FabricConstruction || "").trim().toLowerCase();
+              const myGSM = String(row.GSM || "").trim().toLowerCase();
+
+              if (plan.knitting && Array.isArray(plan.knitting)) {
+                const kItem = plan.knitting.find(
+                  (k) =>
+                    k.itemData &&
+                    String(k.itemData.Color || "").trim().toLowerCase() === myColor &&
+                    String(k.itemData.FabricConstruction || "").trim().toLowerCase() === myConst &&
+                    String(k.itemData.GSM || "").trim().toLowerCase() === myGSM,
+                );
+                if (kItem) {
+                  knitStart = kItem.startDate || "";
+                  knitEnd = kItem.endDate || "";
+                  knitType = kItem.planType || "";
+                }
+              }
+
+              if (plan.dyeing && Array.isArray(plan.dyeing)) {
+                const dItem = plan.dyeing.find(
+                  (d) =>
+                    d.itemData &&
+                    String(d.itemData.Color || "").trim().toLowerCase() === myColor,
+                );
+                if (dItem) {
+                  dyeStart = dItem.startDate || "";
+                  dyeEnd = dItem.endDate || "";
+                  dyeType = dItem.planType || "";
+                }
+              }
+
+              row["Knit Start Date"] = knitStart;
+              row["Knit End Date"] = knitEnd;
+              row["Knit Plan Type"] = knitType;
+              row["Dyeing Start Date"] = dyeStart;
+              row["Dyeing End Date"] = dyeEnd;
+              row["Dyeing Plan Type"] = dyeType;
               row["Delivery Plan Start"] = "";
               row["Delivery Plan End"] = "";
               row["Delivery Plan Type"] = "";
