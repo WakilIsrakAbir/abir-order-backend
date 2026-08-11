@@ -6,6 +6,7 @@ const XLSX = require('xlsx');
 const File = require('../models/File');
 const OrderDate = require('../models/OrderDate');
 const Order = require('../models/Order');
+const DeptValidOrders = require('../models/DeptValidOrders');
 
 // ১. Multer Setup - Disk Storage (memory bachanot jonno)
 const fs = require('fs');
@@ -490,11 +491,14 @@ async function parseAndStoreExcel(filePath, savedName, category, bucket) {
 // Process General Information file — creates/updates Order docs with general info
 async function processGeneralFile(sheetData) {
     const bulkOps = [];
+    const validOrderNos = [];
 
     for (const row of sheetData) {
         const km = buildKeyMap(row);
         const orderNo = String(getVal(row, ['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No'], km)).trim();
         if (!orderNo || orderNo === 'undefined') continue;
+
+        validOrderNos.push(orderNo);
 
         const buyer = String(getVal(row, ['Buyer', 'BuyerName', 'Customer'], km)).trim().toUpperCase().replace(/\s+/g, ' ');
         const bookingDate = formatExcelDateServer(getVal(row, ['BookingReceiveDate', 'BookingDate', 'Date'], km));
@@ -535,6 +539,16 @@ async function processGeneralFile(sheetData) {
             await Order.bulkWrite(bulkOps.slice(i, i + 500), { ordered: false });
         }
         console.log(`  General: ${bulkOps.length} orders upserted`);
+    }
+
+    // Save valid orderNos for filtering — latest General file-এর orderNo গুলো track করো
+    if (validOrderNos.length > 0) {
+        await DeptValidOrders.findOneAndUpdate(
+            { dept: 'general' },
+            { $set: { validOrderNos, updatedAt: new Date() } },
+            { upsert: true }
+        );
+        console.log(`  General: ${validOrderNos.length} valid orderNos saved for filtering`);
     }
 }
 
@@ -590,6 +604,17 @@ async function processDeptFile(sheetData, dept) {
             await Order.bulkWrite(bulkOps.slice(i, i + 500), { ordered: false });
         }
         console.log(`  ${dept}: ${bulkOps.length} orders updated with items`);
+    }
+
+    // Save valid orderNos for filtering — latest dept file-এর orderNo গুলো track করো
+    const validOrderNos = Object.keys(orderItems);
+    if (validOrderNos.length > 0) {
+        await DeptValidOrders.findOneAndUpdate(
+            { dept },
+            { $set: { validOrderNos, updatedAt: new Date() } },
+            { upsert: true }
+        );
+        console.log(`  ${dept}: ${validOrderNos.length} valid orderNos saved for filtering`);
     }
 }
 

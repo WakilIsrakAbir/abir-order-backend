@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Order = require("../models/Order");
 const OrderDate = require("../models/OrderDate");
+const DeptValidOrders = require("../models/DeptValidOrders");
 
 // ==========================================================
 // GET /api/orders/buyers — Fetch all unique buyer names
@@ -123,6 +124,12 @@ router.get("/", async (req, res) => {
     // Build filter
     const filter = {};
 
+    // Only show orders from uploaded file for this department
+    const deptValid = await DeptValidOrders.findOne({ dept }).lean();
+    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
+      filter.orderNo = { $in: deptValid.validOrderNos };
+    }
+
     // Department plan status filter
     const statusField = `${dept}PlanStatus`;
     if (status === "Completed") {
@@ -148,11 +155,18 @@ router.get("/", async (req, res) => {
 
     // Search by orderNo
     if (search) {
-      if (req.query.exact === "true") {
-        // Exact match
-        filter.orderNo = { $regex: `^${search}$`, $options: "i" };
+      const searchCondition = req.query.exact === "true"
+        ? { orderNo: { $regex: `^${search}$`, $options: "i" } }
+        : { orderNo: { $regex: search, $options: "i" } };
+      
+      if (filter.orderNo) {
+        // validOrderNos filter already set — combine with $and
+        filter.$and = filter.$and || [];
+        filter.$and.push({ orderNo: filter.orderNo });
+        filter.$and.push(searchCondition);
+        delete filter.orderNo;
       } else {
-        filter.orderNo = { $regex: search, $options: "i" };
+        filter.orderNo = searchCondition.orderNo;
       }
     }
 
@@ -256,6 +270,13 @@ router.get("/buyers/:dept", async (req, res) => {
     const itemsField = `${dept}Items`;
 
     const filter = { [itemsField]: { $exists: true, $ne: [] } };
+
+    // Only show buyers from orders in the uploaded file
+    const deptValid = await DeptValidOrders.findOne({ dept }).lean();
+    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
+      filter.orderNo = { $in: deptValid.validOrderNos };
+    }
+
     if (req.allowedRawBuyers) filter.buyer = { $in: req.allowedRawBuyers };
     const buyers = await Order.distinct("buyer", filter);
 
@@ -283,6 +304,13 @@ router.get("/report/:dept", async (req, res) => {
       [statusField]: { $in: ["Confirm", "Tentative"] },
       [itemsField]: { $exists: true, $ne: [] },
     };
+
+    // Only show orders from uploaded file
+    const deptValid = await DeptValidOrders.findOne({ dept }).lean();
+    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
+      filter.orderNo = { $in: deptValid.validOrderNos };
+    }
+
     if (req.allowedRawBuyers) filter.buyer = { $in: req.allowedRawBuyers };
 
     // No limit — fetch ALL confirmed/tentative orders for report
@@ -342,8 +370,23 @@ router.get("/tracking/:dept", async (req, res) => {
 
     // 1. Get Confirmed orders from Order collection (LIGHTWEIGHT)
     const orderFilter = { [statusField]: "Confirm" };
+
+    // Only show orders from uploaded file
+    const deptValid = await DeptValidOrders.findOne({ dept: dbDept }).lean();
+    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
+      orderFilter.orderNo = { $in: deptValid.validOrderNos };
+    }
+
     if (buyer) orderFilter.buyer = { $regex: buyer, $options: "i" };
-    if (search) orderFilter.orderNo = { $regex: search, $options: "i" };
+    if (search) {
+      // If we already have $in filter, we need to combine with search
+      if (orderFilter.orderNo && orderFilter.orderNo.$in) {
+        const searchRegex = new RegExp(search, 'i');
+        orderFilter.orderNo.$in = orderFilter.orderNo.$in.filter(no => searchRegex.test(no));
+      } else {
+        orderFilter.orderNo = { $regex: search, $options: "i" };
+      }
+    }
 
     if (req.allowedRawBuyers) {
       if (orderFilter.buyer) {
@@ -968,6 +1011,13 @@ router.get("/report-download/:dept", async (req, res) => {
     const filter = {
       [statusField]: { $in: statusList },
     };
+
+    // Only include orders from uploaded file
+    const deptValid = await DeptValidOrders.findOne({ dept }).lean();
+    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
+      filter.orderNo = { $in: deptValid.validOrderNos };
+    }
+
     if (req.allowedRawBuyers) filter.buyer = { $in: req.allowedRawBuyers };
 
     // 1. Get minimal order info
@@ -1412,6 +1462,13 @@ router.get("/tracking-download/:dept", async (req, res) => {
 
     // Get confirmed orders only
     const orderFilter = { [statusField]: "Confirm" };
+
+    // Only include orders from uploaded file
+    const deptValid = await DeptValidOrders.findOne({ dept: dbDept }).lean();
+    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
+      orderFilter.orderNo = { $in: deptValid.validOrderNos };
+    }
+
     if (req.allowedRawBuyers) orderFilter.buyer = { $in: req.allowedRawBuyers };
     const confirmedOrders = await Order.find(orderFilter, {
       orderNo: 1,
