@@ -1728,6 +1728,48 @@ router.get("/tracking-download/:dept", async (req, res) => {
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(orderedRows);
+
+    // Format date columns as proper Excel dates (not text)
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    // Find which columns are date columns by checking header row
+    const dateColIndices = [];
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cell = ws[XLSX.utils.encode_cell({ r: 0, c: C })];
+      if (cell) {
+        const hdr = String(cell.v).toLowerCase();
+        if (
+          hdr === "plan start" ||
+          hdr === "plan end" ||
+          hdr === "actual start" ||
+          hdr === "actual end"
+        ) {
+          dateColIndices.push(C);
+        }
+      }
+    }
+    // Convert date text values to Excel date cells
+    for (let R = 1; R <= range.e.r; ++R) {
+      for (const C of dateColIndices) {
+        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = ws[cellRef];
+        if (
+          !cell ||
+          cell.v === undefined ||
+          cell.v === null ||
+          cell.v === "" ||
+          cell.v === "—" ||
+          cell.v === "-"
+        )
+          continue;
+        const d = new Date(cell.v);
+        if (!isNaN(d.getTime())) {
+          cell.t = "d";
+          cell.v = d;
+          cell.z = "dd/mm/yyyy";
+        }
+      }
+    }
+
     XLSX.utils.book_append_sheet(wb, ws, "Report");
 
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
