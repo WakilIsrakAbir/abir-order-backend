@@ -205,11 +205,15 @@ router.get("/", async (req, res) => {
       Order.countDocuments(filter),
     ]);
 
-    // Get unique buyers for buyer filter tabs (from all orders matching dept+status)
-    const buyerFilter = { ...filter };
-    delete buyerFilter.buyer; // Remove buyer filter to get all buyers
-    delete buyerFilter.orderNo; // Remove search filter
-    const buyersList = await Order.distinct("buyer", buyerFilter);
+    // Get unique buyers for buyer filter tabs (from all orders matching this department)
+    const buyerTabFilter = { [itemsField]: { $exists: true, $ne: [] } };
+    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
+      buyerTabFilter.orderNo = { $in: deptValid.validOrderNos };
+    }
+    if (req.allowedRawBuyers) {
+      buyerTabFilter.buyer = { $in: req.allowedRawBuyers };
+    }
+    const buyersList = await Order.distinct("buyer", buyerTabFilter);
 
     res.status(200).json({
       orders,
@@ -379,12 +383,17 @@ router.get("/tracking/:dept", async (req, res) => {
 
     if (buyer) orderFilter.buyer = { $regex: buyer, $options: "i" };
     if (search) {
+      const escaped = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = req.query.exact === "true" ? `^${escaped}$` : escaped;
+      const searchRegex = new RegExp(pattern, "i");
+
       // If we already have $in filter, we need to combine with search
       if (orderFilter.orderNo && orderFilter.orderNo.$in) {
-        const searchRegex = new RegExp(search, 'i');
-        orderFilter.orderNo.$in = orderFilter.orderNo.$in.filter(no => searchRegex.test(no));
+        orderFilter.orderNo.$in = orderFilter.orderNo.$in.filter((no) =>
+          searchRegex.test(no)
+        );
       } else {
-        orderFilter.orderNo = { $regex: search, $options: "i" };
+        orderFilter.orderNo = { $regex: pattern, $options: "i" };
       }
     }
 
@@ -415,8 +424,11 @@ router.get("/tracking/:dept", async (req, res) => {
     // 2. Find orphaned tracking data — OrderDate docs with actual data (LIGHTWEIGHT)
     //    for orders NOT in the confirmed/completed list
     const orphanMatch = [{ orderNo: { $nin: orderNos } }];
-    if (search)
-      orphanMatch.push({ orderNo: { $regex: search, $options: "i" } });
+    if (search) {
+      const escaped = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = req.query.exact === "true" ? `^${escaped}$` : escaped;
+      orphanMatch.push({ orderNo: { $regex: pattern, $options: "i" } });
+    }
 
     const orphanFilter = {
       $and: orphanMatch,
