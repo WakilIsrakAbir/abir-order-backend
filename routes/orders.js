@@ -1672,15 +1672,24 @@ router.get("/tracking-download/:dept", async (req, res) => {
       if (status === "Complete" && !hasActualEnd) return;
 
       // Compute pass/fail
-      let startResult = "—",
-        endResult = "—";
-      if (actualStart && planStart) {
-        startResult =
-          new Date(actualStart) <= new Date(planStart) ? "Pass" : "Fail";
-      }
-      if (actualEnd && planEnd) {
-        endResult = new Date(actualEnd) <= new Date(planEnd) ? "Pass" : "Fail";
-      }
+      const todayDateVal = new Date().setHours(0, 0, 0, 0);
+      const calcResult = (actualDate, planDate) => {
+        const hasActual = actualDate && actualDate.trim() !== "" && actualDate !== "-";
+        const hasPlan = planDate && planDate.trim() !== "" && planDate !== "-";
+        if (hasActual) {
+          if (!hasPlan) return "—";
+          return new Date(actualDate).setHours(0, 0, 0, 0) <= new Date(planDate).setHours(0, 0, 0, 0) ? "Pass" : "Fail";
+        }
+        if (hasPlan) {
+          if (new Date(planDate).setHours(0, 0, 0, 0) < todayDateVal) {
+            return "Fail";
+          }
+        }
+        return "—";
+      };
+
+      const startResult = calcResult(actualStart, planStart);
+      const endResult = calcResult(actualEnd, planEnd);
 
       rows.push({
         "Order/Booking No.": plan.orderNo,
