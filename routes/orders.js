@@ -746,6 +746,7 @@ router.get("/tracking/:dept", async (req, res) => {
     });
 
     paginatedDocs.forEach((doc) => {
+      doc.uploadedItems = paginatedOrdersMap[doc.orderNo] || [];
       if (!doc[dbDept] || doc[dbDept].length === 0) {
         const rawItems = paginatedOrdersMap[doc.orderNo] || [];
         doc[dbDept] = rawItems.map((raw) => {
