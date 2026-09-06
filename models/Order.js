@@ -30,6 +30,14 @@ const orderSchema = new mongoose.Schema({
     fabricNotes: { type: String, default: '' },
     status: { type: String, default: '' },
     
+    // === Additional General Info Fields (Columns U, V, W, D, Y, Z, E) ===
+    gmtUnit: { type: String, default: '' },
+    floor: { type: String, default: '' },
+    buyerTeam: { type: String, default: '' },
+    bookedBy: { type: String, default: '' },
+    style: { type: String, default: '' },
+    bpStatus: { type: String, default: '' },
+    
     // === Department Items (from dept-specific Excel files) ===
     // Each dept has an array of fabric/item rows from Excel
     knittingItems: { type: Array, default: [] },

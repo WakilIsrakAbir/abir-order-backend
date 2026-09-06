@@ -470,14 +470,15 @@ async function parseAndStoreExcel(filePath, savedName, category, bucket) {
     }
     const buf = Buffer.concat(chunks);
     const wb = XLSX.read(buf, { type: 'buffer' });
-    const sheetData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const sheetData = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
     if (sheetData.length === 0) return;
 
     const cat = (category || 'General').toLowerCase();
 
     if (cat === 'general') {
-        await processGeneralFile(sheetData);
+        await processGeneralFile(sheetData, sheet);
     } else {
         const deptMap = { yd: 'yd', knitting: 'knitting', dyeing: 'dyeing', finishing: 'finishing', delivery: 'delivery' };
         const dept = deptMap[cat] || cat;
@@ -489,9 +490,25 @@ async function parseAndStoreExcel(filePath, savedName, category, bucket) {
 }
 
 // Process General Information file — creates/updates Order docs with general info
-async function processGeneralFile(sheetData) {
+async function processGeneralFile(sheetData, sheet) {
     const bulkOps = [];
     const validOrderNos = [];
+
+    // Map rows directly by column letters (A, D, E, U, V, W, Y, Z)
+    const colMapByOrderNo = new Map();
+    if (sheet) {
+        try {
+            const colRows = XLSX.utils.sheet_to_json(sheet, { header: 'A', defval: '' });
+            for (let i = 1; i < colRows.length; i++) {
+                const oNo = String(colRows[i]['A'] ?? '').trim();
+                if (oNo && oNo !== 'undefined' && !colMapByOrderNo.has(oNo)) {
+                    colMapByOrderNo.set(oNo, colRows[i]);
+                }
+            }
+        } catch (e) {
+            console.error('Error parsing colRows:', e);
+        }
+    }
 
     for (const row of sheetData) {
         const km = buildKeyMap(row);
@@ -500,15 +517,28 @@ async function processGeneralFile(sheetData) {
 
         validOrderNos.push(orderNo);
 
+        const colRow = colMapByOrderNo.get(orderNo) || {};
+
         const buyer = String(getVal(row, ['Buyer', 'BuyerName', 'Customer'], km)).trim().toUpperCase().replace(/\s+/g, ' ');
         const bookingDate = formatExcelDateServer(getVal(row, ['BookingReceiveDate', 'BookingDate', 'Date'], km));
+
+        // Column-letter tracked fields: U, V, W, D, Y, Z, E
+        const gmtUnit = String(colRow['U'] !== undefined && colRow['U'] !== '' ? colRow['U'] : getVal(row, ['BookingUnit', 'Booking Unit', 'GmtUnit', 'Gmt Unit'], km)).trim();
+        const floor = String(colRow['V'] !== undefined && colRow['V'] !== '' ? colRow['V'] : getVal(row, ['Unit', 'Floor'], km)).trim();
+        const buyerTeam = String(colRow['W'] !== undefined && colRow['W'] !== '' ? colRow['W'] : getVal(row, ['BuyerTeam', 'Buyer Team'], km)).trim();
+        const bookedBy = String(colRow['D'] !== undefined && colRow['D'] !== '' ? colRow['D'] : getVal(row, ['BookingBy', 'BookedBy', 'Booked By', 'Booking By'], km)).trim();
+        const style = String(colRow['Y'] !== undefined && colRow['Y'] !== '' ? colRow['Y'] : getVal(row, ['Style'], km)).trim();
+        const bpStatusRaw = colRow['Z'] !== undefined && colRow['Z'] !== '' ? colRow['Z'] : getVal(row, ['BPStatus', 'BP Status'], km);
+        const bpStatus = formatExcelDateServer(bpStatusRaw);
+        const pmc = String(colRow['E'] !== undefined && colRow['E'] !== '' ? colRow['E'] : getVal(row, ['PMC'], km)).trim();
 
         const updateData = {
             buyer: (buyer && buyer !== 'UNDEFINED' && buyer !== 'N/A') ? buyer : '',
             bookingDate: bookingDate,
             requiredQtyKgs: getVal(row, ['RequiredQtyKgs', 'Qty', 'Order Qty'], km),
-            bookingBy: String(getVal(row, ['BookingBy'], km)),
-            pmc: String(getVal(row, ['PMC'], km)),
+            bookingBy: bookedBy,
+            bookedBy: bookedBy,
+            pmc: pmc,
             finalConfirmation: String(getVal(row, ['FinalConfirmation', 'Final Confirmation', 'Status'], km)),
             eventDay: getVal(row, ['EventDay', 'Event day'], km),
             ship1: formatExcelDateServer(getVal(row, ['1stShipmentDate', '1st Shipment Date', 'Ship1'], km)),
@@ -521,7 +551,13 @@ async function processGeneralFile(sheetData) {
             deliStart: formatExcelDateServer(getVal(row, ['TADeliStart', 'T&A Deli. Start', 'DeliStart'], km)),
             deliEnd: formatExcelDateServer(getVal(row, ['TADeliEnd', 'T&A Deli. End', 'DeliEnd'], km)),
             fabricNotes: String(getVal(row, ['FabricNotes', 'Fabric Notes', 'Notes'], km)),
-            status: String(getVal(row, ['Status'], km))
+            status: String(getVal(row, ['Status'], km)),
+
+            gmtUnit: gmtUnit,
+            floor: floor,
+            buyerTeam: buyerTeam,
+            style: style,
+            bpStatus: bpStatus
         };
 
         bulkOps.push({

@@ -62,19 +62,44 @@ async function main() {
             for await (const c of stream) chunks.push(c);
             const buf = Buffer.concat(chunks);
             const wb = XLSX.read(buf, { type: 'buffer' });
-            const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+            const sheet = wb.Sheets[wb.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
             const cat = (file.category || 'General').toLowerCase();
             console.log(`  ${file.category} | ${file.originalName} | ${data.length} rows`);
 
             if (cat === 'general') {
                 const ops = [];
+                const colMapByOrderNo = new Map();
+                try {
+                    const colRows = XLSX.utils.sheet_to_json(sheet, { header: 'A', defval: '' });
+                    for (let i = 1; i < colRows.length; i++) {
+                        const oNo = String(colRows[i]['A'] ?? '').trim();
+                        if (oNo && oNo !== 'undefined' && !colMapByOrderNo.has(oNo)) {
+                            colMapByOrderNo.set(oNo, colRows[i]);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error parsing colRows in migrate:', e);
+                }
+
                 for (const row of data) {
                     const km = buildKeyMap(row);
                     const orderNo = String(getVal(row, ['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No'], km)).trim();
                     if (!orderNo) continue;
 
+                    const colRow = colMapByOrderNo.get(orderNo) || {};
+
                     const buyer = String(getVal(row, ['Buyer', 'BuyerName', 'Customer'], km)).trim().toUpperCase().replace(/\s+/g, ' ');
+                    const bookedBy = String(colRow['D'] !== undefined && colRow['D'] !== '' ? colRow['D'] : getVal(row, ['BookingBy', 'BookedBy', 'Booked By', 'Booking By'], km)).trim();
+                    const pmc = String(colRow['E'] !== undefined && colRow['E'] !== '' ? colRow['E'] : getVal(row, ['PMC'], km)).trim();
+                    const gmtUnit = String(colRow['U'] !== undefined && colRow['U'] !== '' ? colRow['U'] : getVal(row, ['BookingUnit', 'Booking Unit', 'GmtUnit', 'Gmt Unit'], km)).trim();
+                    const floor = String(colRow['V'] !== undefined && colRow['V'] !== '' ? colRow['V'] : getVal(row, ['Unit', 'Floor'], km)).trim();
+                    const buyerTeam = String(colRow['W'] !== undefined && colRow['W'] !== '' ? colRow['W'] : getVal(row, ['BuyerTeam', 'Buyer Team'], km)).trim();
+                    const style = String(colRow['Y'] !== undefined && colRow['Y'] !== '' ? colRow['Y'] : getVal(row, ['Style'], km)).trim();
+                    const bpStatusRaw = colRow['Z'] !== undefined && colRow['Z'] !== '' ? colRow['Z'] : getVal(row, ['BPStatus', 'BP Status'], km);
+                    const bpStatus = fmtDate(bpStatusRaw);
+
                     ops.push({
                         updateOne: {
                             filter: { orderNo },
@@ -83,7 +108,9 @@ async function main() {
                                     buyer: (buyer && buyer !== 'UNDEFINED' && buyer !== 'N/A') ? buyer : '',
                                     bookingDate: fmtDate(getVal(row, ['BookingReceiveDate', 'BookingDate', 'Date'], km)),
                                     requiredQtyKgs: getVal(row, ['RequiredQtyKgs', 'Qty', 'Order Qty'], km),
-                                    bookingBy: String(getVal(row, ['BookingBy'], km)),
+                                    bookingBy: bookedBy,
+                                    bookedBy: bookedBy,
+                                    pmc: pmc,
                                     finalConfirmation: String(getVal(row, ['FinalConfirmation', 'Final Confirmation'], km)),
                                     eventDay: getVal(row, ['EventDay', 'Event day'], km),
                                     ship1: fmtDate(getVal(row, ['1stShipmentDate', '1st Shipment Date'], km)),
@@ -96,7 +123,12 @@ async function main() {
                                     deliStart: fmtDate(getVal(row, ['TADeliStart', 'T&A Deli. Start'], km)),
                                     deliEnd: fmtDate(getVal(row, ['TADeliEnd', 'T&A Deli. End'], km)),
                                     fabricNotes: String(getVal(row, ['FabricNotes', 'Fabric Notes', 'Notes'], km)),
-                                    status: String(getVal(row, ['Status'], km))
+                                    status: String(getVal(row, ['Status'], km)),
+                                    gmtUnit: gmtUnit,
+                                    floor: floor,
+                                    buyerTeam: buyerTeam,
+                                    style: style,
+                                    bpStatus: bpStatus
                                 }
                             },
                             upsert: true
