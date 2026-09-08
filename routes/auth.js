@@ -41,6 +41,25 @@ router.post('/register', async (req, res) => {
     }
 });
 
+// Calculate remaining seconds until 12:00 AM (midnight) in Bangladesh (UTC+6)
+function getSecondsUntilDhakaMidnight() {
+    const now = new Date();
+    const dhakaOffsetMs = 6 * 60 * 60 * 1000;
+    const dhakaNow = new Date(now.getTime() + dhakaOffsetMs);
+    const nextDhakaMidnightUtc = new Date(Date.UTC(
+        dhakaNow.getUTCFullYear(),
+        dhakaNow.getUTCMonth(),
+        dhakaNow.getUTCDate() + 1,
+        0, 0, 0, 0
+    ));
+    const nextMidnightTimestamp = nextDhakaMidnightUtc.getTime() - dhakaOffsetMs;
+    const diffSeconds = Math.floor((nextMidnightTimestamp - now.getTime()) / 1000);
+    return {
+        seconds: Math.max(diffSeconds, 60),
+        expiresAt: nextMidnightTimestamp
+    };
+}
+
 // 2. LOGIN API (Login korar jonno)
 // Endpoint: POST /api/auth/login
 router.post('/login', async (req, res) => {
@@ -59,13 +78,14 @@ router.post('/login', async (req, res) => {
             return res.status(400).json({ message: "পাসওয়ার্ড ভুল হয়েছে!" });
         }
 
-        // Token toiri kora (Jeta frontend e pathabo)
+        // Token toiri kora - Protidin raat 12:00 AM e expire hobe
         const payload = {
             userId: user._id,
             role: user.role
         };
 
-        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1d' }); // 1 din por expire hobe
+        const { seconds: expiresInSeconds, expiresAt: sessionExpiresAt } = getSecondsUntilDhakaMidnight();
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: expiresInSeconds });
 
         // Update lastActive
         user.lastActive = Date.now();
@@ -75,6 +95,7 @@ router.post('/login', async (req, res) => {
         res.status(200).json({
             message: "সফলভাবে লগইন হয়েছে!",
             token,
+            sessionExpiresAt,
             user: {
                 username: user.username,
                 role: user.role,
