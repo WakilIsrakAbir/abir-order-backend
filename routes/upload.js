@@ -522,7 +522,7 @@ async function processGeneralFile(sheetData, sheet) {
         const buyer = String(getVal(row, ['Buyer', 'BuyerName', 'Customer'], km)).trim().toUpperCase().replace(/\s+/g, ' ');
         const bookingDate = formatExcelDateServer(getVal(row, ['BookingReceiveDate', 'BookingDate', 'Date'], km));
 
-        // Column-letter tracked fields: U, V, W, D, Y, Z, E
+        // Column-letter tracked fields: U, V, W, D, Y, Z, E, AA-AH
         const gmtUnit = String(colRow['U'] !== undefined && colRow['U'] !== '' ? colRow['U'] : getVal(row, ['BookingUnit', 'Booking Unit', 'GmtUnit', 'Gmt Unit'], km)).trim();
         const floor = String(colRow['V'] !== undefined && colRow['V'] !== '' ? colRow['V'] : getVal(row, ['Unit', 'Floor'], km)).trim();
         const buyerTeam = String(colRow['W'] !== undefined && colRow['W'] !== '' ? colRow['W'] : getVal(row, ['BuyerTeam', 'Buyer Team'], km)).trim();
@@ -531,6 +531,15 @@ async function processGeneralFile(sheetData, sheet) {
         const bpStatusRaw = colRow['Z'] !== undefined && colRow['Z'] !== '' ? colRow['Z'] : getVal(row, ['BPStatus', 'BP Status'], km);
         const bpStatus = formatExcelDateServer(bpStatusRaw);
         const pmc = String(colRow['E'] !== undefined && colRow['E'] !== '' ? colRow['E'] : getVal(row, ['PMC'], km)).trim();
+
+        const brush = String(colRow['AA'] !== undefined && colRow['AA'] !== '' ? colRow['AA'] : getVal(row, ['Brush'], km)).trim();
+        const peach = String(colRow['AB'] !== undefined && colRow['AB'] !== '' ? colRow['AB'] : getVal(row, ['Peach'], km)).trim();
+        const bodyFabric = String(colRow['AC'] !== undefined && colRow['AC'] !== '' ? colRow['AC'] : getVal(row, ['Body Fabric', 'BodyFabric', 'Fabric'], km)).trim();
+        const programType = String(colRow['AD'] !== undefined && colRow['AD'] !== '' ? colRow['AD'] : getVal(row, ['Program type', 'Program Type', 'ProgramType'], km)).trim();
+        const ald = String(colRow['AE'] !== undefined && colRow['AE'] !== '' ? colRow['AE'] : getVal(row, ['ALD'], km)).trim();
+        const bodyGsm = colRow['AF'] !== undefined && colRow['AF'] !== '' ? colRow['AF'] : getVal(row, ['Body GSM', 'BodyGSM', 'GSM'], km);
+        const heatset = String(colRow['AG'] !== undefined && colRow['AG'] !== '' ? colRow['AG'] : getVal(row, ['Heatset'], km)).trim();
+        const pmcNotes = String(colRow['AH'] !== undefined && colRow['AH'] !== '' ? colRow['AH'] : getVal(row, ['PMC Notes', 'PMCNotes'], km)).trim();
 
         const updateData = {
             buyer: (buyer && buyer !== 'UNDEFINED' && buyer !== 'N/A') ? buyer : '',
@@ -557,7 +566,15 @@ async function processGeneralFile(sheetData, sheet) {
             floor: floor,
             buyerTeam: buyerTeam,
             style: style,
-            bpStatus: bpStatus
+            bpStatus: bpStatus,
+            ald: ald,
+            brush: brush,
+            peach: peach,
+            heatset: heatset,
+            bodyFabric: bodyFabric,
+            programType: programType,
+            bodyGsm: bodyGsm,
+            pmcNotes: pmcNotes
         };
 
         bulkOps.push({

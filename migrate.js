@@ -99,6 +99,14 @@ async function main() {
                     const style = String(colRow['Y'] !== undefined && colRow['Y'] !== '' ? colRow['Y'] : getVal(row, ['Style'], km)).trim();
                     const bpStatusRaw = colRow['Z'] !== undefined && colRow['Z'] !== '' ? colRow['Z'] : getVal(row, ['BPStatus', 'BP Status'], km);
                     const bpStatus = fmtDate(bpStatusRaw);
+                    const brush = String(colRow['AA'] !== undefined && colRow['AA'] !== '' ? colRow['AA'] : getVal(row, ['Brush'], km)).trim();
+                    const peach = String(colRow['AB'] !== undefined && colRow['AB'] !== '' ? colRow['AB'] : getVal(row, ['Peach'], km)).trim();
+                    const bodyFabric = String(colRow['AC'] !== undefined && colRow['AC'] !== '' ? colRow['AC'] : getVal(row, ['Body Fabric', 'BodyFabric', 'Fabric'], km)).trim();
+                    const programType = String(colRow['AD'] !== undefined && colRow['AD'] !== '' ? colRow['AD'] : getVal(row, ['Program type', 'Program Type', 'ProgramType'], km)).trim();
+                    const ald = String(colRow['AE'] !== undefined && colRow['AE'] !== '' ? colRow['AE'] : getVal(row, ['ALD'], km)).trim();
+                    const bodyGsm = colRow['AF'] !== undefined && colRow['AF'] !== '' ? colRow['AF'] : getVal(row, ['Body GSM', 'BodyGSM', 'GSM'], km);
+                    const heatset = String(colRow['AG'] !== undefined && colRow['AG'] !== '' ? colRow['AG'] : getVal(row, ['Heatset'], km)).trim();
+                    const pmcNotes = String(colRow['AH'] !== undefined && colRow['AH'] !== '' ? colRow['AH'] : getVal(row, ['PMC Notes', 'PMCNotes'], km)).trim();
 
                     ops.push({
                         updateOne: {
@@ -128,7 +136,15 @@ async function main() {
                                     floor: floor,
                                     buyerTeam: buyerTeam,
                                     style: style,
-                                    bpStatus: bpStatus
+                                    bpStatus: bpStatus,
+                                    ald: ald,
+                                    brush: brush,
+                                    peach: peach,
+                                    heatset: heatset,
+                                    bodyFabric: bodyFabric,
+                                    programType: programType,
+                                    bodyGsm: bodyGsm,
+                                    pmcNotes: pmcNotes
                                 }
                             },
                             upsert: true
